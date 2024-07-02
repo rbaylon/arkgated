@@ -5,25 +5,20 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net/http"
+	"net"
 	"os"
 	"os/signal"
+	"slices"
+	"strings"
 	"syscall"
-	"time"
 
 	"github.com/namsral/flag"
 )
 
-// default interval
-const defaultTick = 60 * time.Second
-
 type config struct {
-	contentType string
-	server      string
-	statusCode  int
-	tick        time.Duration
-	url         string
-	userAgent   string
+	maxbuff  int
+	commands []string
+	sockfile string
 }
 
 func (c *config) init(args []string) error {
@@ -31,58 +26,71 @@ func (c *config) init(args []string) error {
 	flags.String(flag.DefaultConfigFlagname, "", "Path to config file")
 
 	var (
-		statusCode  = flags.Int("status", 200, "Response HTTP status code")
-		tick        = flags.Duration("tick", defaultTick, "Ticking interval")
-		server      = flags.String("server", "", "Server HTTP header value")
-		contentType = flags.String("content_type", "", "Content-Type HTTP header value")
-		userAgent   = flags.String("user_agent", "", "User-Agent HTTP header value")
-		url         = flags.String("url", "", "Request URL")
+		maxbuff  = flags.Int("maxbuff", 64, "Max buffer size")
+		commands = flags.String("commands", "STARTPF,STOPPF", "Comma separated commands")
+		sockfile = flags.String("socketfile", "/tmp/arkgated.sock", "Path to create the socket file")
 	)
 
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
 	}
 
-	c.statusCode = *statusCode
-	c.tick = *tick
-	c.server = *server
-	c.contentType = *contentType
-	c.userAgent = *userAgent
-	c.url = *url
+	cmdlist := strings.Split(*commands, ",")
+
+	c.maxbuff = *maxbuff
+	c.commands = cmdlist
+	c.sockfile = *sockfile
+	log.Println("Using commands")
+	for _, v := range c.commands {
+		log.Println(v)
+	}
 
 	return nil
 }
 
-func run(ctx context.Context, c *config, out io.Writer) error {
-	c.init(os.Args)
+func run(c *config, out io.Writer, sock net.Listener) error {
 	log.SetOutput(out)
 
 	for {
-		select {
-		case <-ctx.Done():
-			log.Println("Cancelled")
-			return nil
-		case <-time.Tick(c.tick):
-			resp, err := http.Get(c.url)
+		log.Println("Blocking until we get connection")
+		conn, err := sock.Accept()
+		if err != nil {
+			return err
+		}
+		go func(conn net.Conn) {
+			log.Println("connection accepted")
+			defer conn.Close()
+			buf := make([]byte, c.maxbuff)
+			n, err := conn.Read(buf)
 			if err != nil {
-				return err
+				log.Fatal(err)
 			}
+			msg := strings.TrimSpace(string(buf[:n]))
+			log.Println(msg)
+			if slices.Contains(c.commands, msg) {
+				log.Println("OK")
+			} else {
+				log.Println("NOK")
+			}
+		}(conn)
+	}
+}
 
-			if resp.StatusCode != c.statusCode {
-				log.Printf("Status code mismatch, got: %d\n", resp.StatusCode)
+func waitForSignal(cancel context.CancelFunc, ctx context.Context, c *config, sigchan chan os.Signal) {
+	for {
+		select {
+		case s := <-sigchan:
+			switch s {
+			case syscall.SIGINT, syscall.SIGTERM:
+				log.Printf("Got SIGINT/SIGTERM, exiting.")
+				os.Remove(c.sockfile)
+				os.Exit(2)
+			case syscall.SIGHUP:
+				log.Println("SIGHUP received. Relaoding config.")
+				c.init(os.Args)
 			}
-
-			if s := resp.Header.Get("server"); s != c.server {
-				log.Printf("Server header mismatch, got: %s\n", s)
-			}
-
-			if ct := resp.Header.Get("content-type"); ct != c.contentType {
-				log.Printf("Content-Type header mismatch, got: %s\n", ct)
-			}
-
-			if ua := resp.Header.Get("user-agent"); ua != c.userAgent {
-				log.Printf("User-Agent header mismatch, got: %s\n", ua)
-			}
+		case <-ctx.Done():
+			log.Printf("Context Done.")
 		}
 	}
 }
@@ -96,23 +104,16 @@ func main() {
 
 	c := &config{}
 
-	go func() {
-		select {
-		case s := <-signalChan:
-			switch s {
-			case syscall.SIGINT, syscall.SIGTERM:
-				log.Printf("Got SIGINT/SIGTERM, exiting.")
-				cancel()
-			case syscall.SIGHUP:
-				log.Println("SIGHUP received. Relaoding config.")
-				c.init(os.Args)
-			}
-		case <-ctx.Done():
-			log.Printf("Context Done.")
-		}
-	}()
+	go waitForSignal(cancel, ctx, c, signalChan)
 
-	if err := run(ctx, c, os.Stdout); err != nil {
+	c.init(os.Args)
+	socket, err := net.Listen("unix", c.sockfile)
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Println("IPC running")
+
+	if err := run(c, os.Stdout, socket); err != nil {
 		fmt.Fprintf(os.Stderr, "%s\n", err)
 		os.Exit(1)
 	}

@@ -13,6 +13,7 @@ import (
 	"syscall"
 
 	"github.com/namsral/flag"
+	Arkcommand "github.com/rbaylon/arkgated/arkcommand"
 )
 
 type config struct {
@@ -20,6 +21,7 @@ type config struct {
 	arkgid   int
 	commands []string
 	sockfile string
+	cmdfile  string
 }
 
 func (c *config) init(args []string) error {
@@ -28,9 +30,10 @@ func (c *config) init(args []string) error {
 
 	var (
 		maxbuff  = flags.Int("maxbuff", 64, "Max buffer size")
-		commands = flags.String("commands", "STARTPF,STOPPF", "Comma separated commands")
+		commands = flags.String("commands", "RELOADPF,TESTPF", "Comma separated commands")
 		sockfile = flags.String("socketfile", "/tmp/arkgated.sock", "Path to create the socket file")
 		arkgid   = flags.Int("arkgid", 1001, "arkgate group id")
+		cmdfile  = flags.String("cmdfile", "./cmd.json", "Path to json command file")
 	)
 
 	if err := flags.Parse(args[1:]); err != nil {
@@ -43,6 +46,7 @@ func (c *config) init(args []string) error {
 	c.commands = cmdlist
 	c.sockfile = *sockfile
 	c.arkgid = *arkgid
+	c.cmdfile = *cmdfile
 	log.Println("Using commands")
 	for _, v := range c.commands {
 		log.Println(v)
@@ -53,6 +57,7 @@ func (c *config) init(args []string) error {
 
 func run(c *config, out io.Writer, sock net.Listener) error {
 	log.SetOutput(out)
+	cmds := Arkcommand.Init(c.cmdfile)
 
 	for {
 		log.Println("Blocking until we get connection")
@@ -66,14 +71,25 @@ func run(c *config, out io.Writer, sock net.Listener) error {
 			buf := make([]byte, c.maxbuff)
 			n, err := conn.Read(buf)
 			if err != nil {
-				log.Fatal(err)
+				log.Println(err)
 			}
 			msg := strings.TrimSpace(string(buf[:n]))
 			log.Println(msg)
 			if slices.Contains(c.commands, msg) {
-				log.Println("OK")
+				acmd := cmds[msg]
+				_, err := acmd.Run()
+				if err != nil {
+					log.Println("Run error: ", err)
+				}
+				_, err = conn.Write([]byte("OK"))
+				if err != nil {
+					log.Println("Reply error: ", err)
+				}
 			} else {
-				log.Println("NOK")
+				_, err = conn.Write([]byte("NOK"))
+				if err != nil {
+					log.Println("Reply error: ", err)
+				}
 			}
 		}(conn)
 	}

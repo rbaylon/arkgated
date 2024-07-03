@@ -1,0 +1,25 @@
+ {
+    "cmds": [
+        {
+            "name": "RELOADPF",
+            "cmd": "/sbin/pfctl",
+            "opts": [
+                "-f",
+                "/etc/pf.conf"
+            ]
+        },
+        {
+            "name": "TESTPF",
+            "cmd": "/sbin/pfctl",
+            "opts": [
+                "-nf",
+                "/etc/pf.conf"
+            ]
+        },
+        {
+            "name": "HOSTNAME",
+            "cmd": "/bin/hostname",
+            "opts": []
+        }
+    ]
+}

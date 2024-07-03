@@ -17,6 +17,7 @@ import (
 
 type config struct {
 	maxbuff  int
+	arkgid   int
 	commands []string
 	sockfile string
 }
@@ -29,6 +30,7 @@ func (c *config) init(args []string) error {
 		maxbuff  = flags.Int("maxbuff", 64, "Max buffer size")
 		commands = flags.String("commands", "STARTPF,STOPPF", "Comma separated commands")
 		sockfile = flags.String("socketfile", "/tmp/arkgated.sock", "Path to create the socket file")
+		arkgid   = flags.Int("arkgid", 1001, "arkgate group id")
 	)
 
 	if err := flags.Parse(args[1:]); err != nil {
@@ -40,6 +42,7 @@ func (c *config) init(args []string) error {
 	c.maxbuff = *maxbuff
 	c.commands = cmdlist
 	c.sockfile = *sockfile
+	c.arkgid = *arkgid
 	log.Println("Using commands")
 	for _, v := range c.commands {
 		log.Println(v)
@@ -111,6 +114,15 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	err = os.Chown(c.sockfile, os.Getuid(), c.arkgid)
+	if err != nil {
+		log.Fatal(err)
+	}
+	err = os.Chmod(c.sockfile, 0660)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	log.Println("IPC running")
 
 	if err := run(c, os.Stdout, socket); err != nil {

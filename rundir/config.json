@@ -1,0 +1,11 @@
+{
+  "ifaces": [
+    { "name": "wan", "device": "iwm0", "speed": "30M", "default": true, "type": "external"},
+    { "name": "lan", "device": "re0", "speed": "900M", "default": false, "type": "internal"}
+  ],
+  "wifi_ip_list": "wifilist.txt",
+  "subs_ip_list": "subslist.txt",
+  "subs_portal_port": 4000,
+  "captive_portal_port": 3000,
+  "arkgate_api_port": 5000
+}

@@ -20,6 +20,11 @@
             "name": "HOSTNAME",
             "cmd": "/bin/hostname",
             "opts": []
+        },
+        {
+            "name": "NETSTART",
+            "cmd": "sh /etc/netstart",
+            "opts": []
         }
     ]
 }

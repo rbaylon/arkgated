@@ -14,6 +14,7 @@ import (
 
 	"github.com/namsral/flag"
 	Arkcommand "github.com/rbaylon/arkgated/arkcommand"
+	pfconfig "github.com/rbaylon/arkgated/config/pf"
 )
 
 type config struct {
@@ -22,6 +23,7 @@ type config struct {
 	commands []string
 	sockfile string
 	cmdfile  string
+	rundir   string
 }
 
 func (c *config) init(args []string) error {
@@ -34,6 +36,7 @@ func (c *config) init(args []string) error {
 		sockfile = flags.String("socketfile", "/tmp/arkgated.sock", "Path to create the socket file")
 		arkgid   = flags.Int("arkgid", 1001, "arkgate group id")
 		cmdfile  = flags.String("cmdfile", "./cmd.json", "Path to json command file")
+		rundir   = flags.String("rundir", "./rundir/", "Path to rundir")
 	)
 
 	if err := flags.Parse(args[1:]); err != nil {
@@ -47,6 +50,7 @@ func (c *config) init(args []string) error {
 	c.sockfile = *sockfile
 	c.arkgid = *arkgid
 	c.cmdfile = *cmdfile
+	c.rundir = *rundir
 	log.Println("Using commands")
 	for _, v := range c.commands {
 		log.Println(v)
@@ -58,6 +62,14 @@ func (c *config) init(args []string) error {
 func run(c *config, out io.Writer, sock net.Listener) error {
 	log.SetOutput(out)
 	cmds := Arkcommand.Init(c.cmdfile)
+	pfcfg, err := pfconfig.Init(c.rundir + "config.json")
+	if err != nil {
+		log.Println("Error reading json config: ", err)
+	}
+	err = pfcfg.Create(c.rundir)
+	if err != nil {
+		log.Println("Error creating pf config file: ", err)
+	}
 
 	for {
 		log.Println("Blocking until we get connection")

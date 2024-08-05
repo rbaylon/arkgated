@@ -2,28 +2,29 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net"
 	"os"
 	"os/signal"
-	"slices"
-	"strings"
 	"syscall"
 
 	"github.com/namsral/flag"
 	Arkcommand "github.com/rbaylon/arkgated/arkcommand"
 	pfconfig "github.com/rbaylon/arkgated/config/pf"
+	"github.com/rbaylon/arkgated/srvclient"
 )
 
 type config struct {
 	maxbuff  int
 	arkgid   int
-	commands []string
+	srvcurl  string
 	sockfile string
 	cmdfile  string
 	rundir   string
+	creds    string
 }
 
 func (c *config) init(args []string) error {
@@ -31,41 +32,38 @@ func (c *config) init(args []string) error {
 	flags.String(flag.DefaultConfigFlagname, "", "Path to config file")
 
 	var (
-		maxbuff  = flags.Int("maxbuff", 64, "Max buffer size")
-		commands = flags.String("commands", "RELOADPF,TESTPF", "Comma separated commands")
+		maxbuff  = flags.Int("maxbuff", 1024, "Max buffer size")
+		srvcurl  = flags.String("srvcurl", "http://127.0.0.1/api/v1/", "Service manager url")
 		sockfile = flags.String("socketfile", "/tmp/arkgated.sock", "Path to create the socket file")
 		arkgid   = flags.Int("arkgid", 1001, "arkgate group id")
 		cmdfile  = flags.String("cmdfile", "./cmd.json", "Path to json command file")
 		rundir   = flags.String("rundir", "./rundir/", "Path to rundir")
+		creds    = flags.String("creds", "./rundir/", "Basic auth api creds")
 	)
 
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
 	}
 
-	cmdlist := strings.Split(*commands, ",")
-
 	c.maxbuff = *maxbuff
-	c.commands = cmdlist
+	c.srvcurl = *srvcurl
 	c.sockfile = *sockfile
 	c.arkgid = *arkgid
 	c.cmdfile = *cmdfile
 	c.rundir = *rundir
-	log.Println("Using commands")
-	for _, v := range c.commands {
-		log.Println(v)
-	}
-
+	c.creds = *creds
 	return nil
 }
 
 func run(c *config, out io.Writer, sock net.Listener) error {
 	log.SetOutput(out)
-	cmds := Arkcommand.Init(c.cmdfile)
 	pfcfg, err := pfconfig.Init(c.rundir + "config.json")
 	if err != nil {
 		log.Println("Error reading json config: ", err)
 	}
+
+	srvclient.Enroll(c.srvcurl, apitoken, pfcfg)
+
 	err = pfcfg.Create(c.rundir)
 	if err != nil {
 		log.Println("Error creating pf config file: ", err)
@@ -85,24 +83,28 @@ func run(c *config, out io.Writer, sock net.Listener) error {
 			if err != nil {
 				log.Println(err)
 			}
-			msg := strings.TrimSpace(string(buf[:n]))
-			log.Println(msg)
-			if slices.Contains(c.commands, msg) {
-				acmd := cmds[msg]
-				_, err := acmd.Run()
-				if err != nil {
-					log.Println("Run error: ", err)
-				}
-				_, err = conn.Write([]byte("OK"))
-				if err != nil {
-					log.Println("Reply error: ", err)
-				}
-			} else {
+			msg := buf[:n]
+			var cmd Arkcommand.Arkcmd
+			err = json.Unmarshal(msg, &cmd)
+			log.Printf("%v", cmd)
+			if err != nil {
 				_, err = conn.Write([]byte("NOK"))
 				if err != nil {
 					log.Println("Reply error: ", err)
 				}
 			}
+			if cmd.Name == "CheckPF" {
+				pfcfg.Create(c.rundir)
+			}
+			_, err = cmd.Run()
+			if err != nil {
+				log.Println(err)
+				_, err = conn.Write([]byte("NOK"))
+				if err != nil {
+					log.Println(err)
+				}
+			}
+			conn.Write([]byte("OK"))
 		}(conn)
 	}
 }
@@ -125,6 +127,8 @@ func waitForSignal(cancel context.CancelFunc, ctx context.Context, c *config, si
 		}
 	}
 }
+
+var apitoken *string
 
 func main() {
 	ctx := context.Background()
@@ -151,7 +155,13 @@ func main() {
 		log.Fatal(err)
 	}
 
-	log.Println("IPC running")
+	log.Println("IPC running ")
+
+	token, err := srvclient.GetToken(c.creds, c.srvcurl+"login")
+	apitoken = token
+	if err != nil {
+		log.Println(err)
+	}
 
 	if err := run(c, os.Stdout, socket); err != nil {
 		fmt.Fprintf(os.Stderr, "%s\n", err)

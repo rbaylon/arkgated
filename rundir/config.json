@@ -7,5 +7,5 @@
   "subs_ip_list": "subslist.txt",
   "subs_portal_port": 4000,
   "captive_portal_port": 3000,
-  "arkgate_api_port": 5000
+  "router": "devopenbsd" 
 }

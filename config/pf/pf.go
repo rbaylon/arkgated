@@ -6,25 +6,45 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"time"
 
 	"github.com/MakeNowJust/heredoc"
 )
 
+type Voucher struct {
+	Value         string    `json:"value"`
+	Type          string    `json:"type"`
+	Hours         int       `json:"hours"`
+	Status        string    `json:"status"`
+	Downspeed     int       `json:"downspeed"`
+	Upspeed       int       `json:"upspeed"`
+	Burstspeed    int       `json:"burstspeed"`
+	Duration      int       `json:"duration"`
+	Ip            string    `json:"ip"`
+	DateStarted   time.Time `json:"date_started"`
+	DateEnd       time.Time `json:"date_end"`
+	DateExpires   time.Time `json:"date_expires"`
+	HoursConsumed float64   `json:"hours_consumed"`
+	PfconfigID    uint      `json:"pfconfig_id"`
+}
+
 type Iface struct {
-	Name    string `json:"name"`
-	Speed   string `json:"speed"`
-	Device  string `json:"device"`
-	Default bool   `json:"default"`
-	Type    string `json:"type"`
+	Name       string `json:"name"`
+	Speed      string `json:"speed"`
+	Device     string `json:"device"`
+	Default    bool   `json:"default"`
+	Type       string `json:"type"`
+	PfconfigID uint   `json:"pfconfig_id"`
 }
 
 type PfConfig struct {
-	Ifaces            []Iface `json:"ifaces"`
-	WifiIpList        string  `json:"wifi_ip_list"`
-	SubsIpList        string  `json:"subs_ip_list"`
-	SubsPortalPort    int     `json:"subs_portal_port"`
-	CaptivePortalPort int     `json:"captive_portal_port"`
-	ArkgateApiPort    int     `json:"arkgate_api_port"`
+	Ifaces            []Iface   `json:"ifaces"`
+	WifiIpList        string    `json:"wifi_ip_list"`
+	SubsIpList        string    `json:"subs_ip_list"`
+	SubsPortalPort    int       `json:"subs_portal_port"`
+	CaptivePortalPort int       `json:"captive_portal_port"`
+	Router            string    `json:"router"`
+	Vouchers          []Voucher `json:"vouchers"`
 }
 
 func (c *PfConfig) Create(rundir string) error {
@@ -55,10 +75,9 @@ set skip on lo0
 	}
 	queues = queues + heredoc.Docf(`
 queue selfq parent %s bandwidth 10M min 5M max 10M burst 15M for 100ms 
-queue apps parent %s bandwidth 15M 
+queue apps parent %s bandwidth 10M 
 queue  ssh_interactive parent apps bandwidth 5M min 2M 
 queue  ssh_bulk parent apps bandwidth 5M max 5M 
-queue  api parent apps bandwidth 5M min 2M 
 # insert new queueus after this line 
 `, defiface, defiface)
 	matches := "match in all scrub (no-df random-id max-mss 1440)\n"
@@ -95,8 +114,6 @@ block in quick from <martians>
 			if v.Default {
 				passrules = fmt.Sprintf("%spass in on { $%s } inet proto tcp from any to $%s:0 port 22 keep state (max-src-conn-rate 10/10, overload <bad_hosts> flush global) set queue (ssh_interactive, ssh_bulk)\n",
 					passrules, v.Name, v.Name)
-				passrules = fmt.Sprintf("%spass in on { $%s } inet proto tcp from any to $%s:0 port %d keep state (max-src-conn-rate 100/10, overload <bad_hosts> flush global) set queue api\n",
-					passrules, v.Name, v.Name, c.ArkgateApiPort)
 				passrules = fmt.Sprintf("%spass out on { $%s } from { $%s:0, 127.0.0.1 } to any set queue selfq\n", passrules, v.Name, v.Name)
 			}
 			passrules = fmt.Sprintf("%spass out on { $%s } inet proto icmp from { $%s:0, 127.0.0.1 } to any\n", passrules, v.Name, v.Name)

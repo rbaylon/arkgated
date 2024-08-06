@@ -87,10 +87,13 @@ queue  ssh_bulk parent apps bandwidth 5M max 5M
 			nats = fmt.Sprintf("%smatch out on { $%s } inet from !($%s:network) to any nat-to ($%s:0)\n",
 				nats, v.Name, v.Name, v.Name)
 		} else {
-			nats = fmt.Sprintf("%smatch in on { $%s } proto tcp from !<wifi> to any port { 80, 443 } rdr-to 127.0.0.1 port %d\n",
-				nats, v.Name, c.CaptivePortalPort)
-			nats = fmt.Sprintf("%smatch in on { $%s } proto tcp from <subsexpr> to any port { 80, 443 } rdr-to 127.0.0.1 port %d\n",
-				nats, v.Name, c.SubsPortalPort)
+			if v.Name == "lan" {
+				nats = fmt.Sprintf("%smatch in on { $%s } proto tcp from !<wifi> to any port { 80, 443 } rdr-to 127.0.0.1 port %d\n",
+					nats, v.Name, c.CaptivePortalPort)
+			} else {
+				nats = fmt.Sprintf("%smatch in on { $%s } proto tcp from <subsexpr> to any port { 80, 443 } rdr-to 127.0.0.1 port %d\n",
+					nats, v.Name, c.SubsPortalPort)
+			}
 		}
 		nats = fmt.Sprintf("%smatch out on { $%s } proto udp set prio 4\n",
 			nats, v.Name)
@@ -119,6 +122,7 @@ block in quick from <martians>
 			passrules = fmt.Sprintf("%spass out on { $%s } inet proto icmp from { $%s:0, 127.0.0.1 } to any\n", passrules, v.Name, v.Name)
 		} else {
 			passrules = fmt.Sprintf("%spass in on { $%s } proto {udp, tcp} to any port 53\n", passrules, v.Name)
+			passrules = fmt.Sprintf("%spass out on { $%s } from { $%s:0 }\n", passrules, v.Name, v.Name)
 			passrules = fmt.Sprintf("%spass in on { $%s } inet proto tcp from any to { $%s:0, 127.0.0.1 } port { %d, %d }\n", passrules, v.Name, v.Name, c.CaptivePortalPort, c.SubsPortalPort)
 		}
 	}

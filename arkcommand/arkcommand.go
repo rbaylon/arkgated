@@ -26,6 +26,7 @@ func (ac *Arkcmd) Run() (int, error) {
 	cmd := exec.Command(ac.Cmd, ac.Opts...)
 	out, err := cmd.Output()
 	if err != nil {
+		log.Println(string(out))
 		return 1, err
 	}
 	log.Println(string(out))

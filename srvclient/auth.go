@@ -24,7 +24,8 @@ func Enroll(urlbase string, token *string, pf *pfconfig.PfConfig) error {
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", *token))
 	res, err := client.Do(req)
 	if err != nil {
-		log.Println("yyyy", err)
+		log.Println(err)
+		return err
 	}
 	if res.StatusCode != 200 {
 		res.Body.Close()
@@ -40,6 +41,25 @@ func Enroll(urlbase string, token *string, pf *pfconfig.PfConfig) error {
 	}
 	log.Println("Enrolled")
 	return nil
+}
+
+func GetSubs(url string, token *string) (*pfconfig.PfConfig, error) {
+	client := &http.Client{}
+	req, _ := http.NewRequest("GET", url, nil)
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", *token))
+	res, err := client.Do(req)
+	if err != nil {
+		log.Println(err)
+		return nil, err
+	}
+	defer res.Body.Close()
+	responseData, ioerr := ioutil.ReadAll(res.Body)
+	if ioerr != nil {
+		return nil, ioerr
+	}
+	var cfg pfconfig.PfConfig
+	json.Unmarshal(responseData, &cfg)
+	return &cfg, nil
 }
 
 func GetToken(creds string, api_login_url string) (*string, error) {

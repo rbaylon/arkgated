@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"net/http"
 	"os"
 	"time"
 
@@ -25,7 +26,7 @@ type Voucher struct {
 	DateEnd       time.Time `json:"date_end"`
 	DateExpires   time.Time `json:"date_expires"`
 	HoursConsumed float64   `json:"hours_consumed"`
-	PfconfigID    uint      `json:"pfconfig_id"`
+	PfConfigID    uint      `json:"pfconfig_id"`
 }
 
 type Iface struct {
@@ -34,7 +35,7 @@ type Iface struct {
 	Device     string `json:"device"`
 	Default    bool   `json:"default"`
 	Type       string `json:"type"`
-	PfconfigID uint   `json:"pfconfig_id"`
+	PfConfigID uint   `json:"pfconfig_id"`
 }
 
 type PfConfig struct {
@@ -47,7 +48,26 @@ type PfConfig struct {
 	Vouchers          []Voucher `json:"vouchers"`
 }
 
-func (c *PfConfig) Create(rundir string) error {
+func GetSubs(url string, token *string) (*PfConfig, error) {
+	client := &http.Client{}
+	req, _ := http.NewRequest("GET", url, nil)
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", *token))
+	res, err := client.Do(req)
+	if err != nil {
+		log.Println(err)
+		return nil, err
+	}
+	defer res.Body.Close()
+	responseData, ioerr := ioutil.ReadAll(res.Body)
+	if ioerr != nil {
+		return nil, ioerr
+	}
+	var cfg PfConfig
+	json.Unmarshal(responseData, &cfg)
+	return &cfg, nil
+}
+
+func (c *PfConfig) Create(rundir string, urlbase string, t *string) error {
 	var macros string
 	for _, v := range c.Ifaces {
 		macros = fmt.Sprintf("%s%s = \"%s\"\n", macros, v.Name, v.Device)
@@ -126,8 +146,52 @@ block in quick from <martians>
 			passrules = fmt.Sprintf("%spass in on { $%s } inet proto tcp from any to { $%s:0, 127.0.0.1 } port { %d, %d }\n", passrules, v.Name, v.Name, c.CaptivePortalPort, c.SubsPortalPort)
 		}
 	}
-	configstring := macros + tables + queues + matches + defaultblock + defaultqrules + passrules
-	err := os.WriteFile(rundir+"pf.conf", []byte(configstring), 0600)
+
+	newpfcfg, err := GetSubs(urlbase+"pfconfig/query/"+c.Router, t)
+	if err != nil {
+		log.Println(err)
+		return err
+	}
+	var subqueue string
+	var subpass string
+	for _, i := range c.Ifaces {
+		for _, voucher := range newpfcfg.Vouchers {
+			if i.Type == "external" {
+				subqueue = fmt.Sprintf("%squeue %s parent %s bandwidth %dM min 5M max %dM burst %dM for %dms\n",
+					subqueue, voucher.Value, i.Name, voucher.Upspeed, voucher.Upspeed, voucher.Burstspeed, voucher.Duration)
+				subpass = fmt.Sprintf("%spass out on $%s set queue %s tagged %s\n",
+					subpass, i.Name, voucher.Value, voucher.Value)
+			} else {
+				if voucher.Type == i.Name {
+					subqueue = fmt.Sprintf("%squeue %s parent %s bandwidth %dM min 5M max %dM burst %dM for %dms\n",
+						subqueue, voucher.Value, i.Name, voucher.Downspeed, voucher.Downspeed, voucher.Burstspeed, voucher.Duration)
+					subpass = fmt.Sprintf("%spass in on $%s from %s set queue %s tag %s\n",
+						subpass, i.Name, voucher.Ip, voucher.Value, voucher.Value)
+				}
+			}
+		}
+	}
+	var wifilist string
+	var subslist string
+	for _, voucher := range newpfcfg.Vouchers {
+		if voucher.Type == "lan" {
+			wifilist = fmt.Sprintf("%s%s\n", wifilist, voucher.Ip)
+		} else {
+			subslist = fmt.Sprintf("%s%s\n", subslist, voucher.Ip)
+		}
+	}
+	err = os.WriteFile(rundir+c.WifiIpList, []byte(wifilist), 0600)
+	if err != nil {
+		log.Println(err)
+		return err
+	}
+	err = os.WriteFile(rundir+c.SubsIpList, []byte(subslist), 0600)
+	if err != nil {
+		log.Println(err)
+		return err
+	}
+	configstring := macros + tables + queues + subqueue + matches + defaultblock + defaultqrules + passrules + subpass
+	err = os.WriteFile(rundir+"pf.conf", []byte(configstring), 0600)
 	if err != nil {
 		log.Println(err)
 		return err

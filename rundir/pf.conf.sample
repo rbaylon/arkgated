@@ -1,0 +1,61 @@
+wan = "iwm0"
+lan = "re0"
+management = "ure0"
+table <allowed> persist file "/home/pogi/go/src/github.com/rbaylon/arkgated/rundir/wifilist.txt"
+table <subsexpr> persist file "/home/pogi/go/src/github.com/rbaylon/arkgated/rundir/subslist.txt"
+table <bad_hosts> persist
+table <martians> { 0.0.0.0/8 169.254.0.0/16  \ 
+       192.0.0.0/24 192.0.2.0/24 224.0.0.0/3 \
+       198.18.0.0/15 198.51.100.0/24 \ 
+       203.0.113.0/24 } 
+set block-policy drop 
+set loginterface egress 
+set skip on lo0 
+queue wan on { $wan } bandwidth 900M
+queue wandef parent wan bandwidth 2M default
+queue mgtnetwan parent wan bandwidth 900M
+queue lan on { $lan } bandwidth 900M
+queue landef parent lan bandwidth 2M default
+queue management on { $management } bandwidth 900M
+queue managementdef parent management bandwidth 2M default
+queue selfq parent wan bandwidth 10M min 5M max 10M burst 15M for 100ms 
+queue apps parent wan bandwidth 10M 
+queue  ssh_interactive parent apps bandwidth 5M min 2M 
+queue  ssh_bulk parent apps bandwidth 5M max 5M
+queue mgtnet parent management bandwidth 900M
+# insert new queueus after this line 
+queue A1S2D3F4wan parent wan bandwidth 5M min 5M max 5M
+queue Z1S2D3F5wan parent wan bandwidth 5M min 5M max 5M
+queue 58AEF1D19B40wan parent wan bandwidth 5M min 5M max 5M
+queue A1S2D3F4lan parent lan bandwidth 10M min 5M max 10M burst 110M for 1000ms
+queue Z1S2D3F5lan parent lan bandwidth 10M min 5M max 10M burst 110M for 1000ms
+queue 58AEF1D19B40lan parent lan bandwidth 10M min 5M max 10M burst 15M for 129600ms
+match in all scrub (no-df random-id max-mss 1440)
+match out on { $wan } inet from !($wan:network) to any nat-to ($wan:0)
+match out on { $wan } proto udp set prio 4
+match in on { $lan } proto tcp from <subsexpr> to any port { 80, 443 } rdr-to 127.0.0.1 port 4000
+match in on { $lan } proto tcp from !<allowed> to any port { 80, 443 } rdr-to 127.0.0.1 port 3000
+match out on { $lan } proto udp set prio 4
+match out on { $management } proto udp set prio 4
+# default bock
+block all
+block in quick from <bad_hosts>
+block in quick from <martians>
+block return out on { $wan } inet all set queue wandef
+block return out on { $lan } inet all set queue landef
+block return out on { $management } inet all set queue managementdef
+pass out on { $wan } proto {udp, tcp} to any port 53
+pass in on { $wan } inet proto tcp from any to $wan:0 port 22 keep state (max-src-conn-rate 10/10, overload <bad_hosts> flush global) set queue (ssh_interactive, ssh_bulk)
+pass out on { $wan } from { $wan:0 } to any set queue selfq
+pass out on { $wan } set queue mgtnetwan tagged mgt
+pass out on { $wan } inet proto icmp from { $wan:0 } to any
+pass in on { $lan } proto {udp, tcp} to any port 53
+pass out on { $lan } from { $lan:0 }
+pass in on { $lan } inet proto tcp from any to { $lan:0, 127.0.0.1 } port { 3000, 4000 }
+pass in on { $management } from { $management:network } set queue mgtnet tag mgt
+pass out on $wan set queue A1S2D3F4wan tagged A1S2D3F4
+pass out on $wan set queue Z1S2D3F5wan tagged Z1S2D3F5
+pass out on $wan set queue 58AEF1D19B40wan tagged 58AEF1D19B40
+pass in on $lan from 172.16.1.3 set queue A1S2D3F4lan tag A1S2D3F4
+pass in on $lan from 172.16.1.2 set queue Z1S2D3F5lan tag Z1S2D3F5
+pass in on $lan from 172.16.69.1 set queue 58AEF1D19B40lan tag 58AEF1D19B40

@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/MakeNowJust/heredoc"
@@ -38,6 +39,31 @@ type Iface struct {
 	PfConfigID uint   `json:"pfconfig_id"`
 }
 
+type Dhcp struct {
+	Subnet     string `json:"subnet"`
+	Netmask    string `json:"netmask"`
+	Routers    string `json:"routers"`
+	Dnsservers string `json:"dnsservers"`
+	Range      string `json:"range"`
+	Type       string `json:"type"`
+	PfConfigID uint   `json:"pfconfig_id"`
+}
+
+type Sub struct {
+	FirstName  string `json:"first_name"`
+	LastName   string `json:"last_name"`
+	FramedIp   string `json:"framed_ip"`
+	Type       string `json:"type"`
+	Status     string `json:"status"`
+	Mac        string `json:"mac"`
+	Loc        string `json:"loc"`
+	Downspeed  int    `json:"downspeed"`
+	Upspeed    int    `json:"upspeed"`
+	Burstspeed int    `json:"burstspeed"`
+	Duration   int    `json:"duration"`
+	PfconfigID uint   `json:"pfconfig_id"`
+}
+
 type PfConfig struct {
 	Ifaces            []Iface   `json:"ifaces"`
 	WifiIpList        string    `json:"wifi_ip_list"`
@@ -46,6 +72,8 @@ type PfConfig struct {
 	CaptivePortalPort int       `json:"captive_portal_port"`
 	Router            string    `json:"router"`
 	Vouchers          []Voucher `json:"vouchers"`
+	Dhcps             []Dhcp    `json:"dhcps"`
+	Subs              []Sub     `json:"subs"`
 }
 
 func GetSubs(url string, token *string) (*PfConfig, error) {
@@ -73,7 +101,7 @@ func (c *PfConfig) Create(rundir string, urlbase string, t *string) error {
 		macros = fmt.Sprintf("%s%s = \"%s\"\n", macros, v.Name, v.Device)
 	}
 	tables := heredoc.Docf(`
-table <wifi> persist file "%s"
+table <allowed> persist file "%s"
 table <subsexpr> persist file "%s"
 table <bad_hosts> persist
 table <martians> { 0.0.0.0/8 169.254.0.0/16  \ 
@@ -91,13 +119,16 @@ set skip on lo0
 			queues, v.Name, v.Name, v.Speed, v.Name, v.Name)
 		if v.Default {
 			defiface = v.Name
+			queues = fmt.Sprintf("%squeue mgtnetwan parent %s bandwidth 900M\n",
+				queues, v.Name)
 		}
 	}
 	queues = queues + heredoc.Docf(`
 queue selfq parent %s bandwidth 10M min 5M max 10M burst 15M for 100ms 
 queue apps parent %s bandwidth 10M 
 queue  ssh_interactive parent apps bandwidth 5M min 2M 
-queue  ssh_bulk parent apps bandwidth 5M max 5M 
+queue  ssh_bulk parent apps bandwidth 5M max 5M
+queue mgtnet parent management bandwidth 900M
 # insert new queueus after this line 
 `, defiface, defiface)
 	matches := "match in all scrub (no-df random-id max-mss 1440)\n"
@@ -107,12 +138,11 @@ queue  ssh_bulk parent apps bandwidth 5M max 5M
 			nats = fmt.Sprintf("%smatch out on { $%s } inet from !($%s:network) to any nat-to ($%s:0)\n",
 				nats, v.Name, v.Name, v.Name)
 		} else {
-			if v.Name == "lan" {
-				nats = fmt.Sprintf("%smatch in on { $%s } proto tcp from !<wifi> to any port { 80, 443 } rdr-to 127.0.0.1 port %d\n",
-					nats, v.Name, c.CaptivePortalPort)
-			} else {
+			if v.Name != "management" {
 				nats = fmt.Sprintf("%smatch in on { $%s } proto tcp from <subsexpr> to any port { 80, 443 } rdr-to 127.0.0.1 port %d\n",
 					nats, v.Name, c.SubsPortalPort)
+				nats = fmt.Sprintf("%smatch in on { $%s } proto tcp from !<allowed> to any port { 80, 443 } rdr-to 127.0.0.1 port %d\n",
+					nats, v.Name, c.CaptivePortalPort)
 			}
 		}
 		nats = fmt.Sprintf("%smatch out on { $%s } proto udp set prio 4\n",
@@ -137,13 +167,18 @@ block in quick from <martians>
 			if v.Default {
 				passrules = fmt.Sprintf("%spass in on { $%s } inet proto tcp from any to $%s:0 port 22 keep state (max-src-conn-rate 10/10, overload <bad_hosts> flush global) set queue (ssh_interactive, ssh_bulk)\n",
 					passrules, v.Name, v.Name)
-				passrules = fmt.Sprintf("%spass out on { $%s } from { $%s:0, 127.0.0.1 } to any set queue selfq\n", passrules, v.Name, v.Name)
+				passrules = fmt.Sprintf("%spass out on { $%s } from { $%s:0 } to any set queue selfq\n", passrules, v.Name, v.Name)
+				passrules = fmt.Sprintf("%spass out on { $%s } set queue mgtnetwan tagged mgt\n", passrules, v.Name)
 			}
-			passrules = fmt.Sprintf("%spass out on { $%s } inet proto icmp from { $%s:0, 127.0.0.1 } to any\n", passrules, v.Name, v.Name)
+			passrules = fmt.Sprintf("%spass out on { $%s } inet proto icmp from { $%s:0 } to any\n", passrules, v.Name, v.Name)
 		} else {
-			passrules = fmt.Sprintf("%spass in on { $%s } proto {udp, tcp} to any port 53\n", passrules, v.Name)
-			passrules = fmt.Sprintf("%spass out on { $%s } from { $%s:0 }\n", passrules, v.Name, v.Name)
-			passrules = fmt.Sprintf("%spass in on { $%s } inet proto tcp from any to { $%s:0, 127.0.0.1 } port { %d, %d }\n", passrules, v.Name, v.Name, c.CaptivePortalPort, c.SubsPortalPort)
+			if v.Name != "management" {
+				passrules = fmt.Sprintf("%spass in on { $%s } proto {udp, tcp} to any port 53\n", passrules, v.Name)
+				passrules = fmt.Sprintf("%spass out on { $%s } from { $%s:0 }\n", passrules, v.Name, v.Name)
+				passrules = fmt.Sprintf("%spass in on { $%s } inet proto tcp from any to { $%s:0, 127.0.0.1 } port { %d, %d }\n", passrules, v.Name, v.Name, c.CaptivePortalPort, c.SubsPortalPort)
+			} else {
+				passrules = fmt.Sprintf("%spass in on { $%s } from { $%s:network } set queue mgtnet tag mgt\n", passrules, v.Name, v.Name)
+			}
 		}
 	}
 
@@ -157,16 +192,34 @@ block in quick from <martians>
 	for _, i := range c.Ifaces {
 		for _, voucher := range newpfcfg.Vouchers {
 			if i.Type == "external" {
-				subqueue = fmt.Sprintf("%squeue %s parent %s bandwidth %dM min 5M max %dM burst %dM for %dms\n",
-					subqueue, voucher.Value, i.Name, voucher.Upspeed, voucher.Upspeed, voucher.Burstspeed, voucher.Duration)
-				subpass = fmt.Sprintf("%spass out on $%s set queue %s tagged %s\n",
-					subpass, i.Name, voucher.Value, voucher.Value)
+				subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM\n",
+					subqueue, voucher.Value, i.Name, i.Name, voucher.Upspeed, voucher.Upspeed)
+				subpass = fmt.Sprintf("%spass out on $%s set queue %s%s tagged %s\n",
+					subpass, i.Name, voucher.Value, i.Name, voucher.Value)
 			} else {
-				if voucher.Type == i.Name {
-					subqueue = fmt.Sprintf("%squeue %s parent %s bandwidth %dM min 5M max %dM burst %dM for %dms\n",
-						subqueue, voucher.Value, i.Name, voucher.Downspeed, voucher.Downspeed, voucher.Burstspeed, voucher.Duration)
-					subpass = fmt.Sprintf("%spass in on $%s from %s set queue %s tag %s\n",
-						subpass, i.Name, voucher.Ip, voucher.Value, voucher.Value)
+				if i.Name == voucher.Type {
+					subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM burst %dM for %dms\n",
+						subqueue, voucher.Value, i.Name, i.Name, voucher.Downspeed, voucher.Downspeed, voucher.Burstspeed, voucher.Duration)
+					subpass = fmt.Sprintf("%spass in on $%s from %s set queue %s%s tag %s\n",
+						subpass, i.Name, voucher.Ip, voucher.Value, i.Name, voucher.Value)
+				}
+			}
+		}
+		for _, sub := range newpfcfg.Subs {
+			if sub.Status == "active" {
+				ident := strings.Replace(sub.Mac, ":", "", -1)
+				if i.Type == "external" {
+					subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM\n",
+						subqueue, ident, i.Name, i.Name, sub.Upspeed, sub.Upspeed)
+					subpass = fmt.Sprintf("%spass out on $%s set queue %s%s tagged %s\n",
+						subpass, i.Name, ident, i.Name, ident)
+				} else {
+					if i.Name == sub.Type {
+						subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM burst %dM for %dms\n",
+							subqueue, ident, i.Name, i.Name, sub.Downspeed, sub.Downspeed, sub.Burstspeed, sub.Duration)
+						subpass = fmt.Sprintf("%spass in on $%s from %s set queue %s%s tag %s\n",
+							subpass, i.Name, sub.FramedIp, ident, i.Name, ident)
+					}
 				}
 			}
 		}
@@ -174,17 +227,20 @@ block in quick from <martians>
 	var wifilist string
 	var subslist string
 	for _, voucher := range newpfcfg.Vouchers {
-		if voucher.Type == "lan" {
-			wifilist = fmt.Sprintf("%s%s\n", wifilist, voucher.Ip)
-		} else {
-			subslist = fmt.Sprintf("%s%s\n", subslist, voucher.Ip)
+		wifilist = fmt.Sprintf("%s%s\n", wifilist, voucher.Ip)
+	}
+	for _, sub := range newpfcfg.Subs {
+		if sub.Status == "active" {
+			wifilist = fmt.Sprintf("%s%s\n", wifilist, sub.FramedIp)
 		}
 	}
+	os.Rename(rundir+c.WifiIpList, rundir+c.WifiIpList+".old")
 	err = os.WriteFile(rundir+c.WifiIpList, []byte(wifilist), 0600)
 	if err != nil {
 		log.Println(err)
 		return err
 	}
+	os.Rename(rundir+c.SubsIpList, rundir+c.SubsIpList+".old")
 	err = os.WriteFile(rundir+c.SubsIpList, []byte(subslist), 0600)
 	if err != nil {
 		log.Println(err)

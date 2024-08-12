@@ -1,14 +1,15 @@
 {
   "ifaces": [
-    { "name": "wan", "device": "iwm0", "speed": "30M", "default": true, "type": "external"},
+    { "name": "wan", "device": "iwm0", "speed": "900M", "default": true, "type": "external"},
     { "name": "lan", "device": "re0", "speed": "900M", "default": false, "type": "internal"},
-    { "name": "plan50", "device": "vlan50", "speed": "900M", "default": false, "type": "internal"},
-    { "name": "plan100", "device": "vlan100", "speed": "900M", "default": false, "type": "internal"},
-    { "name": "plan200", "device": "vlan200", "speed": "900M", "default": false, "type": "internal"}
+    { "name": "management", "device": "ure0", "speed": "900M", "default": false, "type": "internal"}
   ],
   "wifi_ip_list": "wifilist.txt",
   "subs_ip_list": "subslist.txt",
   "subs_portal_port": 4000,
   "captive_portal_port": 3000,
-  "router": "devopenbsd" 
+  "router": "devopenbsd",
+  "dhcps": [
+    { "subnet": "172.16.0.0", "netmask": "255.255.0.0", "routers": "172.16.0.1", "dnsservers": "172.16.0.1", "range": "172.16.1.1 172.16.10.255", "type": "lan" }
+    ]
 }

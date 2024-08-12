@@ -22,3 +22,6 @@ go.work
 .env
 *.db
 arkgated
+*.old
+rundir/subslist.txt
+rundir/wifilist.txt

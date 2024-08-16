@@ -27,6 +27,7 @@ type Voucher struct {
 	DateEnd       time.Time `json:"date_end"`
 	DateExpires   time.Time `json:"date_expires"`
 	HoursConsumed float64   `json:"hours_consumed"`
+	Gateway       string    `json:"gateway"`
 	PfConfigID    uint      `json:"pfconfig_id"`
 }
 
@@ -36,6 +37,7 @@ type Iface struct {
 	Device     string `json:"device"`
 	Default    bool   `json:"default"`
 	Type       string `json:"type"`
+	Gateway    string `json:"gateway"`
 	PfConfigID uint   `json:"pfconfig_id"`
 }
 
@@ -61,6 +63,7 @@ type Sub struct {
 	Upspeed    int    `json:"upspeed"`
 	Burstspeed int    `json:"burstspeed"`
 	Duration   int    `json:"duration"`
+	Gateway    string `json:"gateway"`
 	PfconfigID uint   `json:"pfconfig_id"`
 }
 
@@ -71,6 +74,7 @@ type PfConfig struct {
 	SubsPortalPort    int       `json:"subs_portal_port"`
 	CaptivePortalPort int       `json:"captive_portal_port"`
 	Router            string    `json:"router"`
+	LoadBalance       bool      `json:"load_balance"`
 	Vouchers          []Voucher `json:"vouchers"`
 	Dhcps             []Dhcp    `json:"dhcps"`
 	Subs              []Sub     `json:"subs"`
@@ -161,6 +165,32 @@ block in quick from <martians>
 			defaultqrules, v.Name, v.Name)
 	}
 	var passrules string
+	var gws []string
+	var extifs []string
+	for _, v := range c.Ifaces {
+		if v.Type == "external" {
+			extifs = append(extifs, v.Name)
+			gws = append(gws, v.Gateway)
+		}
+	}
+	var gateways string
+	var lbrules string
+	if c.LoadBalance {
+		gateways = fmt.Sprintf("route-to { %s } round-robin sticky-address", strings.Join(gws, " "))
+		for _, g := range extifs {
+			for _, v := range c.Ifaces {
+				if v.Type == "external" {
+					if v.Name != g {
+						lbrules = fmt.Sprintf("%spass out on $%s from $%s route-to %s\n", lbrules, g, v.Name, v.Gateway)
+					}
+				}
+			}
+		}
+	} else {
+		gateways = ""
+		lbrules = ""
+	}
+
 	for _, v := range c.Ifaces {
 		if v.Type == "external" {
 			passrules = fmt.Sprintf("%spass out on { $%s } proto {udp, tcp} to any port 53\n", passrules, v.Name)
@@ -198,10 +228,13 @@ block in quick from <martians>
 					subpass, i.Name, voucher.Value, i.Name, voucher.Value)
 			} else {
 				if i.Name == voucher.Type {
+					if voucher.Gateway != "" {
+						gateways = fmt.Sprintf("route-to %s", voucher.Gateway)
+					}
 					subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM burst %dM for %dms\n",
 						subqueue, voucher.Value, i.Name, i.Name, voucher.Downspeed, voucher.Downspeed, voucher.Burstspeed, voucher.Duration)
-					subpass = fmt.Sprintf("%spass in on $%s from %s set queue %s%s tag %s\n",
-						subpass, i.Name, voucher.Ip, voucher.Value, i.Name, voucher.Value)
+					subpass = fmt.Sprintf("%spass in on $%s from %s %s set queue %s%s tag %s\n",
+						subpass, i.Name, voucher.Ip, gateways, voucher.Value, i.Name, voucher.Value)
 				}
 			}
 		}
@@ -215,10 +248,13 @@ block in quick from <martians>
 						subpass, i.Name, ident, i.Name, ident)
 				} else {
 					if i.Name == sub.Type {
+						if sub.Gateway != "" {
+							gateways = fmt.Sprintf("route-to %s", sub.Gateway)
+						}
 						subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM burst %dM for %dms\n",
 							subqueue, ident, i.Name, i.Name, sub.Downspeed, sub.Downspeed, sub.Burstspeed, sub.Duration)
-						subpass = fmt.Sprintf("%spass in on $%s from %s set queue %s%s tag %s\n",
-							subpass, i.Name, sub.FramedIp, ident, i.Name, ident)
+						subpass = fmt.Sprintf("%spass in on $%s from %s %s set queue %s%s tag %s\n",
+							subpass, i.Name, sub.FramedIp, gateways, ident, i.Name, ident)
 					}
 				}
 			}
@@ -246,7 +282,7 @@ block in quick from <martians>
 		log.Println(err)
 		return err
 	}
-	configstring := macros + tables + queues + subqueue + matches + defaultblock + defaultqrules + passrules + subpass
+	configstring := macros + tables + queues + subqueue + matches + defaultblock + defaultqrules + passrules + subpass + lbrules
 	err = os.WriteFile(rundir+"pf.conf", []byte(configstring), 0600)
 	if err != nil {
 		log.Println(err)

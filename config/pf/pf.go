@@ -207,7 +207,7 @@ block in quick from <martians>
 			if v.Name != "management" {
 				passrules = fmt.Sprintf("%spass in on { $%s } proto {udp, tcp} to any port 53\n", passrules, v.Name)
 				passrules = fmt.Sprintf("%spass out on { $%s } from { $%s:0 }\n", passrules, v.Name, v.Name)
-				passrules = fmt.Sprintf("%spass in on { $%s } inet proto tcp from any to { $%s:0, 127.0.0.1 } port { %d, %d }\n", passrules, v.Name, v.Name, c.CaptivePortalPort, c.SubsPortalPort)
+				passrules = fmt.Sprintf("%spass in on { $%s } inet proto tcp from any to { $%s:0, 127.0.0.1 } port { %d, %d, 22 }\n", passrules, v.Name, v.Name, c.CaptivePortalPort, c.SubsPortalPort)
 			} else {
 				passrules = fmt.Sprintf("%spass in on { $%s } from { $%s:network } set queue mgtnet tag mgt\n", passrules, v.Name, v.Name)
 			}
@@ -226,7 +226,7 @@ block in quick from <martians>
 			if i.Type == "external" {
 				subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM\n",
 					subqueue, voucher.Value, i.Name, i.Name, voucher.Upspeed, voucher.Upspeed)
-				subpass = fmt.Sprintf("%spass out on $%s set queue %s%s tagged %s\n",
+				subpass = fmt.Sprintf("%spass out on $%s set queue %s%s tagged \"%s\"\n",
 					subpass, i.Name, voucher.Value, i.Name, voucher.Value)
 			} else {
 				if i.Name == voucher.Type {
@@ -235,7 +235,7 @@ block in quick from <martians>
 					}
 					subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM burst %dM for %dms\n",
 						subqueue, voucher.Value, i.Name, i.Name, voucher.Downspeed, voucher.Downspeed, voucher.Burstspeed, voucher.Duration)
-					subpass = fmt.Sprintf("%spass in on $%s from %s %s set queue %s%s tag %s\n",
+					subpass = fmt.Sprintf("%spass in on $%s from %s %s set queue %s%s tag \"%s\"\n",
 						subpass, i.Name, voucher.Ip, gateways, voucher.Value, i.Name, voucher.Value)
 				}
 			}
@@ -246,7 +246,7 @@ block in quick from <martians>
 				if i.Type == "external" {
 					subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM\n",
 						subqueue, ident, i.Name, i.Name, sub.Upspeed, sub.Upspeed)
-					subpass = fmt.Sprintf("%spass out on $%s set queue %s%s tagged %s\n",
+					subpass = fmt.Sprintf("%spass out on $%s set queue %s%s tagged \"%s\"\n",
 						subpass, i.Name, ident, i.Name, ident)
 				} else {
 					if i.Name == sub.Type {
@@ -255,7 +255,7 @@ block in quick from <martians>
 						}
 						subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM burst %dM for %dms\n",
 							subqueue, ident, i.Name, i.Name, sub.Downspeed, sub.Downspeed, sub.Burstspeed, sub.Duration)
-						subpass = fmt.Sprintf("%spass in on $%s from %s %s set queue %s%s tag %s\n",
+						subpass = fmt.Sprintf("%spass in on $%s from %s %s set queue %s%s tag \"%s\"\n",
 							subpass, i.Name, sub.FramedIp, gateways, ident, i.Name, ident)
 					}
 				}

@@ -10,6 +10,6 @@
   "router": "devopenbsd",
   "load_balance": false,
   "dhcps": [
-    { "subnet": "172.16.0.0", "netmask": "255.255.0.0", "routers": "172.16.0.1", "dnsservers": "172.16.0.1", "range": "172.16.1.1 172.16.10.255", "type": "lan" }
+    { "subnet": "172.16.0.0", "netmask": "255.255.0.0", "routers": "172.16.0.1", "dnsservers": "172.16.0.1", "range": "172.16.1.1 172.16.9.255", "type": "lan" }
     ]
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"math/rand/v2"
 	"net/http"
 	"os"
 	"strings"
@@ -108,11 +109,11 @@ func (c *PfConfig) DhcpCreate(rundir string) error {
 		for _, h := range c.Subs {
 			if h.Type == d.Type {
 				host_block := heredoc.Docf(`
-  	host static-client {
+  	host %s {
     	hardware ethernet %s;
     	fixed-address %s;
   	}
-`, h.Mac, h.FramedIp)
+`, h.FirstName+fmt.Sprintf("%d", rand.IntN(100000))+h.LastName, strings.ToLower(h.Mac), h.FramedIp)
 				hosts = fmt.Sprintf("%s%s", hosts, host_block)
 			}
 		}

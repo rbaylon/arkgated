@@ -101,6 +101,40 @@ func GetSubs(url string, token *string) (*PfConfig, error) {
 	return &cfg, nil
 }
 
+func (c *PfConfig) DhcpCreate(rundir string) error {
+	dhcp := ""
+	hosts := ""
+	for _, d := range c.Dhcps {
+		for _, h := range c.Subs {
+			if h.Type == d.Type {
+				host_block := heredoc.Docf(`
+  	host static-client {
+    	hardware ethernet %s;
+    	fixed-address %s;
+  	}
+`, h.Mac, h.FramedIp)
+				hosts = fmt.Sprintf("%s%s", hosts, host_block)
+			}
+		}
+		net_block := heredoc.Docf(`
+subnet %s netmask %s {
+  option routers %s;
+  option domain-name-servers %s, 8.8.8.8, 4.2.2.2;
+  range %s;
+  %s
+}
+`, d.Subnet, d.Netmask, d.Routers, d.Dnsservers, d.Range, hosts)
+		dhcp = fmt.Sprintf("%s%s", dhcp, net_block)
+		hosts = ""
+	}
+	err := os.WriteFile(rundir+"dhcpd.conf", []byte(dhcp), 0600)
+	if err != nil {
+		log.Println(err)
+		return err
+	}
+	return nil
+}
+
 func (c *PfConfig) Create(rundir string, urlbase string, t *string) error {
 	var macros string
 	for _, v := range c.Ifaces {
@@ -281,6 +315,11 @@ block in quick from <martians>
 	}
 	configstring := macros + tables + queues + subqueue + matches + defaultblock + defaultqrules + passrules + subpass + lbrules
 	err = os.WriteFile(rundir+"pf.conf", []byte(configstring), 0600)
+	if err != nil {
+		log.Println(err)
+		return err
+	}
+	err = newpfcfg.DhcpCreate(rundir)
 	if err != nil {
 		log.Println(err)
 		return err

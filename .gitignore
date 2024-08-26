@@ -25,3 +25,4 @@ arkgated
 *.old
 rundir/subslist.txt
 rundir/wifilist.txt
+*.conf

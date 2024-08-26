@@ -1,8 +1,7 @@
 {
   "ifaces": [
     { "name": "wan", "device": "ure0", "speed": "900M", "default": true, "type": "external", "gateway": "192.168.1.1"},
-    { "name": "lan", "device": "re0", "speed": "900M", "default": false, "type": "internal", "gateway": "192.168.1.1"},
-    { "name": "management", "device": "vlan50", "speed": "900M", "default": false, "type": "internal", "gateway": "192.168.1.1"}
+    { "name": "lan", "device": "re0", "speed": "900M", "default": false, "type": "internal", "gateway": "192.168.1.1"}
   ],
   "wifi_ip_list": "wifilist.txt",
   "subs_ip_list": "subslist.txt",

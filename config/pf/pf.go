@@ -125,8 +125,6 @@ set skip on lo0
 			queues, v.Name, v.Name, v.Speed, v.Name, v.Name)
 		if v.Default {
 			defiface = v.Name
-			queues = fmt.Sprintf("%squeue mgtnetwan parent %s bandwidth 900M\n",
-				queues, v.Name)
 		}
 	}
 	queues = queues + heredoc.Docf(`
@@ -134,7 +132,6 @@ queue selfq parent %s bandwidth 10M min 5M max 10M burst 15M for 100ms
 queue apps parent %s bandwidth 10M 
 queue  ssh_interactive parent apps bandwidth 5M min 2M 
 queue  ssh_bulk parent apps bandwidth 5M max 5M
-queue mgtnet parent management bandwidth 900M
 # insert new queueus after this line 
 `, defiface, defiface)
 	matches := "match in all scrub (no-df random-id max-mss 1440)\n"
@@ -200,17 +197,15 @@ block in quick from <martians>
 				passrules = fmt.Sprintf("%spass in on { $%s } inet proto tcp from any to $%s:0 port 22 keep state (max-src-conn-rate 10/10, overload <bad_hosts> flush global) set queue (ssh_interactive, ssh_bulk)\n",
 					passrules, v.Name, v.Name)
 				passrules = fmt.Sprintf("%spass out on { $%s } from { $%s:0 } to any set queue selfq\n", passrules, v.Name, v.Name)
-				passrules = fmt.Sprintf("%spass out on { $%s } set queue mgtnetwan tagged mgt\n", passrules, v.Name)
 			}
 			passrules = fmt.Sprintf("%spass out on { $%s } inet proto icmp from { $%s:0 } to any\n", passrules, v.Name, v.Name)
 		} else {
-			if v.Name != "management" {
-				passrules = fmt.Sprintf("%spass in on { $%s } proto {udp, tcp} to any port 53\n", passrules, v.Name)
-				passrules = fmt.Sprintf("%spass out on { $%s } from { $%s:0 }\n", passrules, v.Name, v.Name)
-				passrules = fmt.Sprintf("%spass in on { $%s } inet proto tcp from any to { $%s:0, 127.0.0.1 } port { %d, %d, 22 }\n", passrules, v.Name, v.Name, c.CaptivePortalPort, c.SubsPortalPort)
-			} else {
-				passrules = fmt.Sprintf("%spass in on { $%s } from { $%s:network } set queue mgtnet tag mgt\n", passrules, v.Name, v.Name)
-			}
+			passrules = fmt.Sprintf("%spass in on { $%s } proto {udp, tcp} to any port 53\n", passrules, v.Name)
+			passrules = fmt.Sprintf("%spass out on { $%s } from { $%s:0 }\n", passrules, v.Name, v.Name)
+			passrules = fmt.Sprintf("%spass in on { $%s } inet proto tcp from any to { $%s:0, 127.0.0.1 } port { %d, %d, 22 }\n", passrules, v.Name, v.Name, c.CaptivePortalPort, c.SubsPortalPort)
+			passrules = fmt.Sprintf("%spass in quick on { $%s } inet proto udp from any port = bootpc to 255.255.255.255 port = bootps keep state\n", passrules, v.Name)
+			passrules = fmt.Sprintf("%spass in quick on { $%s } inet proto udp from any port = bootpc to { $%s:0 } port = bootps keep state\n", passrules, v.Name, v.Name)
+			passrules = fmt.Sprintf("%spass out quick on { $%s } inet proto udp from { $%s:0 } port = bootps to any port = bootpc keep state\n", passrules, v.Name, v.Name)
 		}
 	}
 

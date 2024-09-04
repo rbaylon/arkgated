@@ -1,7 +1,8 @@
 {
   "ifaces": [
-    { "name": "wan", "device": "ure0", "speed": "900M", "default": true, "type": "external", "gateway": "192.168.1.1"},
-    { "name": "lan", "device": "re0", "speed": "900M", "default": false, "type": "internal", "gateway": "192.168.1.1"}
+    { "name": "wan", "device": "igc3", "speed": "900M", "default": true, "type": "external", "gateway": "192.168.1.1"},
+    { "name": "lan", "device": "igc0", "speed": "900M", "default": false, "type": "internal", "gateway": "192.168.1.1"},
+    { "name": "lan2", "device": "igc1", "speed": "900M", "default": false, "type": "internal", "gateway": "192.168.1.1"}
   ],
   "wifi_ip_list": "wifilist.txt",
   "subs_ip_list": "subslist.txt",
@@ -10,6 +11,7 @@
   "router": "devopenbsd",
   "load_balance": false,
   "dhcps": [
-    { "subnet": "172.16.0.0", "netmask": "255.255.0.0", "routers": "172.16.0.1", "dnsservers": "172.16.0.1", "range": "172.16.1.1 172.16.9.255", "type": "lan" }
+    { "subnet": "172.16.0.0", "netmask": "255.255.0.0", "routers": "172.16.0.1", "dnsservers": "172.16.0.1", "range": "172.16.1.1 172.16.9.255", "type": "lan" },
+    { "subnet": "172.17.0.0", "netmask": "255.255.0.0", "routers": "172.17.0.1", "dnsservers": "172.17.0.1", "range": "172.17.1.1 172.17.9.255", "type": "lan2" }
     ]
 }

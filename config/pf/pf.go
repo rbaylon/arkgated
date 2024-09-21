@@ -234,6 +234,7 @@ block in quick from <martians>
 				passrules = fmt.Sprintf("%spass out on { $%s } from { $%s:0 } to any set queue selfq\n", passrules, v.Name, v.Name)
 			}
 			passrules = fmt.Sprintf("%spass out on { $%s } inet proto icmp from { $%s:0 } to any\n", passrules, v.Name, v.Name)
+			passrules = fmt.Sprintf("%spass out on { $%s } from { $%s:0 } to any\n", passrules, v.Name, v.Name)
 		} else {
 			passrules = fmt.Sprintf("%spass in on { $%s } proto {udp, tcp} to any port 53\n", passrules, v.Name)
 			passrules = fmt.Sprintf("%spass out on { $%s } from { $%s:0 }\n", passrules, v.Name, v.Name)

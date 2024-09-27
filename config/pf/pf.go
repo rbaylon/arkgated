@@ -65,6 +65,7 @@ type Sub struct {
 	Burstspeed  int       `json:"burstspeed"`
 	Duration    int       `json:"duration"`
 	Gateway     string    `json:"gateway"`
+	Priority    int       `json:"priority"`
 	DateEnd     time.Time `json:"date_end"`
 	DateExpires time.Time `json:"date_expires"`
 	PfconfigID  uint      `json:"pfconfig_id"`
@@ -239,6 +240,8 @@ block in quick from <martians>
 			passrules = fmt.Sprintf("%spass in on { $%s } proto {udp, tcp} to any port 53\n", passrules, v.Name)
 			passrules = fmt.Sprintf("%spass out on { $%s } from { $%s:0 }\n", passrules, v.Name, v.Name)
 			passrules = fmt.Sprintf("%spass in on { $%s } inet proto tcp from any to { $%s:0, 127.0.0.1 } port { %d, %d, 22, 667 }\n", passrules, v.Name, v.Name, c.CaptivePortalPort, c.SubsPortalPort)
+			passrules = fmt.Sprintf("%spass in quick on { $%s } inet proto tcp from any to $%s:0 port = 22 keep state\n", passrules, v.Name, v.Name)
+			passrules = fmt.Sprintf("%spass in quick on { $%s } inet proto tcp from any to $%s:0 port = 9100 keep state\n", passrules, v.Name, v.Name)
 			passrules = fmt.Sprintf("%spass in quick on { $%s } inet proto udp from any port = bootpc to 255.255.255.255 port = bootps keep state\n", passrules, v.Name)
 			passrules = fmt.Sprintf("%spass in quick on { $%s } inet proto udp from any port = bootpc to { $%s:0 } port = bootps keep state\n", passrules, v.Name, v.Name)
 			passrules = fmt.Sprintf("%spass out quick on { $%s } inet proto udp from { $%s:0 } port = bootps to any port = bootpc keep state\n", passrules, v.Name, v.Name)
@@ -261,6 +264,7 @@ block in quick from <martians>
 					subpass, i.Name, voucher.Value, i.Name, voucher.Value)
 			} else {
 				if i.Name == voucher.Type {
+					gateways = ""
 					if voucher.Gateway != "" {
 						gateways = fmt.Sprintf("route-to %s", voucher.Gateway)
 					}
@@ -274,20 +278,25 @@ block in quick from <martians>
 		for _, sub := range newpfcfg.Subs {
 			if sub.Status == "active" {
 				ident := strings.Replace(sub.Mac, ":", "", -1)
+				priority := ""
+				if sub.Priority > 0 {
+					priority = fmt.Sprintf("set prio %d", sub.Priority)
+				}
 				if i.Type == "external" {
 					subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM\n",
 						subqueue, ident, i.Name, i.Name, sub.Upspeed, sub.Upspeed)
-					subpass = fmt.Sprintf("%spass out on $%s set queue %s%s tagged \"%s\"\n",
-						subpass, i.Name, ident, i.Name, ident)
+					subpass = fmt.Sprintf("%spass out on $%s set queue %s%s %s tagged \"%s\"\n",
+						subpass, i.Name, ident, i.Name, priority, ident)
 				} else {
 					if i.Name == sub.Type {
+						gateways = ""
 						if sub.Gateway != "" {
 							gateways = fmt.Sprintf("route-to %s", sub.Gateway)
 						}
 						subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM burst %dM for %dms\n",
 							subqueue, ident, i.Name, i.Name, sub.Downspeed, sub.Downspeed, sub.Burstspeed, sub.Duration)
-						subpass = fmt.Sprintf("%spass in on $%s from %s %s set queue %s%s tag \"%s\"\n",
-							subpass, i.Name, sub.FramedIp, gateways, ident, i.Name, ident)
+						subpass = fmt.Sprintf("%spass in on $%s from %s %s set queue %s%s %s tag \"%s\"\n",
+							subpass, i.Name, sub.FramedIp, gateways, ident, i.Name, priority, ident)
 					}
 				}
 			}

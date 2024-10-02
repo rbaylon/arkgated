@@ -283,26 +283,36 @@ block in quick from <martians>
 					priority = fmt.Sprintf("set prio %d", sub.Priority)
 				}
 				if i.Type == "external" {
-					ulbw := sub.Upspeed - 1
+					subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM\n", subqueue, ident, i.Name, i.Name, sub.Upspeed, sub.Upspeed)
+					subpass = fmt.Sprintf("%spass out on $%s set queue %s%s %s tagged \"%s\"\n",
+						subpass, i.Name, ident, i.Name, priority, ident)
+					/*ulbw := sub.Upspeed - 1
 					subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM\n",
 						subqueue, ident, i.Name, i.Name, sub.Upspeed, sub.Upspeed)
 					subqueue = fmt.Sprintf("%squeue %s%sack parent %s%s bandwidth 5M min 1M\n", subqueue, ident, i.Name, ident, i.Name)
 					subqueue = fmt.Sprintf("%squeue %s%sdata parent %s%s bandwidth %dM min 5M max %dM\n", subqueue, ident, i.Name, ident, i.Name, ulbw, sub.Upspeed)
 					subpass = fmt.Sprintf("%spass out on $%s set queue ( %s%sdata, %s%sack ) %s tagged \"%s\"\n",
 						subpass, i.Name, ident, i.Name, ident, i.Name, priority, ident)
+					*/
 				} else {
 					if i.Name == sub.Type {
-						dlbw := sub.Downspeed - 1
+						//dlbw := sub.Downspeed - 1
 						gateways = ""
 						if sub.Gateway != "" {
 							gateways = fmt.Sprintf("route-to %s", sub.Gateway)
 						}
-						subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM\n",
-							subqueue, ident, i.Name, i.Name, sub.Downspeed, sub.Downspeed)
-						subqueue = fmt.Sprintf("%squeue %s%sack parent %s%s bandwidth 5M min 1M\n", subqueue, ident, i.Name, ident, i.Name)
-						subqueue = fmt.Sprintf("%squeue %s%sdata parent %s%s bandwidth %dM min 5M max %dM burst %dM for %dms\n", subqueue, ident, i.Name, ident, i.Name, dlbw, sub.Downspeed, sub.Burstspeed, sub.Duration)
-						subpass = fmt.Sprintf("%spass in on $%s from %s %s set queue ( %s%sdata, %s%sack ) %s tag \"%s\"\n",
-							subpass, i.Name, sub.FramedIp, gateways, ident, i.Name, ident, i.Name, priority, ident)
+						subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM burst %dM for %dms\n",
+							subqueue, ident, i.Name, i.Name, sub.Downspeed, sub.Downspeed, sub.Burstspeed, sub.Duration)
+						subpass = fmt.Sprintf("%spass in on $%s from %s %s set queue %s%s %s tag \"%s\"\n",
+							subpass, i.Name, sub.FramedIp, gateways, ident, i.Name, priority, ident)
+						/*
+							subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM\n",
+								subqueue, ident, i.Name, i.Name, sub.Downspeed, sub.Downspeed)
+							subqueue = fmt.Sprintf("%squeue %s%sack parent %s%s bandwidth 5M min 1M\n", subqueue, ident, i.Name, ident, i.Name)
+							subqueue = fmt.Sprintf("%squeue %s%sdata parent %s%s bandwidth %dM min 5M max %dM burst %dM for %dms\n", subqueue, ident, i.Name, ident, i.Name, dlbw, sub.Downspeed, sub.Burstspeed, sub.Duration)
+							subpass = fmt.Sprintf("%spass in on $%s from %s %s set queue ( %s%sdata, %s%sack ) %s tag \"%s\"\n",
+								subpass, i.Name, sub.FramedIp, gateways, ident, i.Name, ident, i.Name, priority, ident)
+						*/
 					}
 				}
 			}

@@ -326,6 +326,8 @@ block in quick from <martians>
 	for _, sub := range newpfcfg.Subs {
 		if sub.Status == "active" {
 			wifilist = fmt.Sprintf("%s%s\n", wifilist, sub.FramedIp)
+		} else {
+			subslist = fmt.Sprintf("%s%s\n", subslist, sub.FramedIp)
 		}
 	}
 	os.Rename(rundir+c.WifiIpList, rundir+c.WifiIpList+".old")

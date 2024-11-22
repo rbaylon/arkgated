@@ -228,7 +228,7 @@ block in quick from <martians>
 
 	for _, v := range c.Ifaces {
 		if v.Type == "external" {
-			passrules = fmt.Sprintf("%spass out on { $%s } proto {udp, tcp} to any port 53\n", passrules, v.Name)
+			passrules = fmt.Sprintf("%spass out quick on { $%s } proto {udp, tcp} to any port 53\n", passrules, v.Name)
 			if v.Default {
 				passrules = fmt.Sprintf("%spass in on { $%s } inet proto tcp from any to $%s:0 port 22 keep state (max-src-conn-rate 10/10, overload <bad_hosts> flush global) set queue (ssh_interactive, ssh_bulk)\n",
 					passrules, v.Name, v.Name)
@@ -237,7 +237,7 @@ block in quick from <martians>
 			passrules = fmt.Sprintf("%spass out on { $%s } inet proto icmp from { $%s:0 } to any\n", passrules, v.Name, v.Name)
 			passrules = fmt.Sprintf("%spass out on { $%s } from { $%s:0 } to any\n", passrules, v.Name, v.Name)
 		} else {
-			passrules = fmt.Sprintf("%spass in on { $%s } proto {udp, tcp} to any port 53\n", passrules, v.Name)
+			passrules = fmt.Sprintf("%spass in quick on { $%s } proto {udp, tcp} to any port 53\n", passrules, v.Name)
 			passrules = fmt.Sprintf("%spass out on { $%s } from { $%s:0 }\n", passrules, v.Name, v.Name)
 			passrules = fmt.Sprintf("%spass in on { $%s } inet proto tcp from any to { $%s:0, 127.0.0.1 } port { %d, %d, 22, 667 }\n", passrules, v.Name, v.Name, c.CaptivePortalPort, c.SubsPortalPort)
 			passrules = fmt.Sprintf("%spass in quick on { $%s } inet proto tcp from any to $%s:0 port = 22 keep state\n", passrules, v.Name, v.Name)

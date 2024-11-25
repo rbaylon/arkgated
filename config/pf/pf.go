@@ -152,7 +152,8 @@ table <martians> { 0.0.0.0/8 169.254.0.0/16  \
        203.0.113.0/24 } 
 set block-policy drop 
 set loginterface egress 
-set skip on lo0 
+set skip on lo0
+set state-defaults pflow
 `, rundir+c.WifiIpList, rundir+c.SubsIpList)
 	var queues string
 	var defiface string

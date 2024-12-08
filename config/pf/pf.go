@@ -243,6 +243,7 @@ block in quick from <martians>
 			passrules = fmt.Sprintf("%spass in on { $%s } inet proto tcp from any to { $%s:0, 127.0.0.1 } port { %d, %d, 22, 667 }\n", passrules, v.Name, v.Name, c.CaptivePortalPort, c.SubsPortalPort)
 			passrules = fmt.Sprintf("%spass in quick on { $%s } inet proto tcp from any to $%s:0 port = 22 keep state\n", passrules, v.Name, v.Name)
 			passrules = fmt.Sprintf("%spass in quick on { $%s } inet proto tcp from any to $%s:0 port = 9100 keep state\n", passrules, v.Name, v.Name)
+			passrules = fmt.Sprintf("%spass in quick on { $%s } inet proto tcp from any to $%s:0 port = 9000 keep state\n", passrules, v.Name, v.Name)
 			passrules = fmt.Sprintf("%spass in quick on { $%s } inet proto udp from any port = bootpc to 255.255.255.255 port = bootps keep state\n", passrules, v.Name)
 			passrules = fmt.Sprintf("%spass in quick on { $%s } inet proto udp from any port = bootpc to { $%s:0 } port = bootps keep state\n", passrules, v.Name, v.Name)
 			passrules = fmt.Sprintf("%spass out quick on { $%s } inet proto udp from { $%s:0 } port = bootps to any port = bootpc keep state\n", passrules, v.Name, v.Name)
@@ -258,21 +259,23 @@ block in quick from <martians>
 	var subpass string
 	for _, i := range c.Ifaces {
 		for _, voucher := range newpfcfg.Vouchers {
-			if i.Type == "external" {
-				subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM\n",
-					subqueue, voucher.Value, i.Name, i.Name, voucher.Upspeed, voucher.Upspeed)
-				subpass = fmt.Sprintf("%spass out on $%s set queue %s%s tagged \"%s\"\n",
-					subpass, i.Name, voucher.Value, i.Name, voucher.Value)
-			} else {
-				if i.Name == voucher.Type {
-					gateways = ""
-					if voucher.Gateway != "" {
-						gateways = fmt.Sprintf("route-to %s", voucher.Gateway)
+			if voucher.Status == "active" {
+				if i.Type == "external" {
+					subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM\n",
+						subqueue, voucher.Value, i.Name, i.Name, voucher.Upspeed, voucher.Upspeed)
+					subpass = fmt.Sprintf("%spass out on $%s set queue %s%s tagged \"%s\"\n",
+						subpass, i.Name, voucher.Value, i.Name, voucher.Value)
+				} else {
+					if i.Name == voucher.Type {
+						gateways = ""
+						if voucher.Gateway != "" {
+							gateways = fmt.Sprintf("route-to %s", voucher.Gateway)
+						}
+						subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM burst %dM for %dms\n",
+							subqueue, voucher.Value, i.Name, i.Name, voucher.Downspeed, voucher.Downspeed, voucher.Burstspeed, voucher.Duration)
+						subpass = fmt.Sprintf("%spass in on $%s from %s %s set queue %s%s tag \"%s\"\n",
+							subpass, i.Name, voucher.Ip, gateways, voucher.Value, i.Name, voucher.Value)
 					}
-					subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM burst %dM for %dms\n",
-						subqueue, voucher.Value, i.Name, i.Name, voucher.Downspeed, voucher.Downspeed, voucher.Burstspeed, voucher.Duration)
-					subpass = fmt.Sprintf("%spass in on $%s from %s %s set queue %s%s tag \"%s\"\n",
-						subpass, i.Name, voucher.Ip, gateways, voucher.Value, i.Name, voucher.Value)
 				}
 			}
 		}
@@ -322,7 +325,9 @@ block in quick from <martians>
 	var wifilist string
 	var subslist string
 	for _, voucher := range newpfcfg.Vouchers {
-		wifilist = fmt.Sprintf("%s%s\n", wifilist, voucher.Ip)
+		if voucher.Status == "active" {
+			wifilist = fmt.Sprintf("%s%s\n", wifilist, voucher.Ip)
+		}
 	}
 	for _, sub := range newpfcfg.Subs {
 		if sub.Status == "active" {

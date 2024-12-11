@@ -1,9 +1,7 @@
 {
   "ifaces": [
-    { "name": "wan", "device": "re0", "speed": "600M", "default": true, "type": "external", "gateway": "192.168.1.1"},
-    { "name": "lan", "device": "ure0", "speed": "900M", "default": false, "type": "internal", "gateway": "192.168.1.1"},
-    { "name": "lan2", "device": "ure1", "speed": "900M", "default": false, "type": "internal", "gateway": "192.168.1.1"}
-
+    { "name": "wan", "device": "re0", "speed": "600M", "default": true, "type": "external", "gateway": "172.17.0.1", "ip": "172.17.0.2", "netmask": "255.255.0.0", "lb_percentage": 100},
+    { "name": "lan", "device": "ure0", "speed": "900M", "default": false, "type": "internal", "gateway": "192.168.1.1", "ip": "192.168.1.69", "netmask": "255.255.255.0", "lb_percentage": 0}
   ],
   "wifi_ip_list": "wifilist.txt",
   "subs_ip_list": "subslist.txt",
@@ -14,5 +12,7 @@
   "dhcps": [
     { "subnet": "172.16.0.0", "netmask": "255.255.0.0", "routers": "172.16.0.1", "dnsservers": "172.16.0.1", "range": "172.16.1.1 172.16.9.255", "type": "lan" },
     { "subnet": "172.17.0.0", "netmask": "255.255.0.0", "routers": "172.17.0.1", "dnsservers": "172.17.0.1", "range": "172.17.1.1 172.17.9.255", "type": "lan2" }
-    ]
+    ],
+  "dns": "8.8.8.8 4.2.2.2",
+  "pflows": [ { "src": "127.0.0.1", "dst": "127.0.0.1:9995", "proto": 10 , "device": "pflow0" } ]
 }

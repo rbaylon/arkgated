@@ -8,7 +8,7 @@ import (
 	"log"
 	"net/http"
 
-	pfconfig "github.com/rbaylon/arkgated/config/pf"
+	pfconfigmodel "github.com/rbaylon/srvcman/modules/pfconfig/model"
 )
 
 type Token struct {
@@ -16,7 +16,7 @@ type Token struct {
 	Jwt  string
 }
 
-func Enroll(urlbase string, token *string, pf *pfconfig.PfConfig) error {
+func Enroll(urlbase string, token *string, pf *pfconfigmodel.Pfconfig) error {
 	create_url := urlbase + "pfconfig/create"
 	query_url := urlbase + "pfconfig/query/" + pf.Router
 	client := &http.Client{}
@@ -43,30 +43,12 @@ func Enroll(urlbase string, token *string, pf *pfconfig.PfConfig) error {
 	return nil
 }
 
-func GetSubs(url string, token *string) (*pfconfig.PfConfig, error) {
-	client := &http.Client{}
-	req, _ := http.NewRequest("GET", url, nil)
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", *token))
-	res, err := client.Do(req)
-	if err != nil {
-		log.Println(err)
-		return nil, err
-	}
-	defer res.Body.Close()
-	responseData, ioerr := ioutil.ReadAll(res.Body)
-	if ioerr != nil {
-		return nil, ioerr
-	}
-	var cfg pfconfig.PfConfig
-	json.Unmarshal(responseData, &cfg)
-	return &cfg, nil
-}
-
 func GetToken(creds string, api_login_url string) (*string, error) {
 	client := &http.Client{}
 	req, _ := http.NewRequest("GET", api_login_url, nil)
 	req.Header.Set("Authorization", fmt.Sprintf("Basic %s", creds))
 	res, err := client.Do(req)
+
 	defer res.Body.Close()
 	if err != nil {
 		return nil, err

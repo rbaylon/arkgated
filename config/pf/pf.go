@@ -5,86 +5,15 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
-	"math/rand/v2"
 	"net/http"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/MakeNowJust/heredoc"
+	pfconfigmodel "github.com/rbaylon/srvcman/modules/pfconfig/model"
 )
 
-type Voucher struct {
-	Value         string    `json:"value"`
-	Type          string    `json:"type"`
-	Hours         int       `json:"hours"`
-	Status        string    `json:"status"`
-	Downspeed     int       `json:"downspeed"`
-	Upspeed       int       `json:"upspeed"`
-	Burstspeed    int       `json:"burstspeed"`
-	Duration      int       `json:"duration"`
-	Ip            string    `json:"ip"`
-	DateStarted   time.Time `json:"date_started"`
-	DateEnd       time.Time `json:"date_end"`
-	DateExpires   time.Time `json:"date_expires"`
-	HoursConsumed float64   `json:"hours_consumed"`
-	Gateway       string    `json:"gateway"`
-	PfConfigID    uint      `json:"pfconfig_id"`
-}
-
-type Iface struct {
-	Name       string `json:"name"`
-	Speed      string `json:"speed"`
-	Device     string `json:"device"`
-	Default    bool   `json:"default"`
-	Type       string `json:"type"`
-	Gateway    string `json:"gateway"`
-	PfConfigID uint   `json:"pfconfig_id"`
-}
-
-type Dhcp struct {
-	Subnet     string `json:"subnet"`
-	Netmask    string `json:"netmask"`
-	Routers    string `json:"routers"`
-	Dnsservers string `json:"dnsservers"`
-	Range      string `json:"range"`
-	Type       string `json:"type"`
-	PfConfigID uint   `json:"pfconfig_id"`
-}
-
-type Sub struct {
-	FirstName   string    `json:"first_name"`
-	LastName    string    `json:"last_name"`
-	FramedIp    string    `json:"framed_ip"`
-	Type        string    `json:"type"`
-	Status      string    `json:"status"`
-	Mac         string    `json:"mac"`
-	Loc         string    `json:"loc"`
-	Downspeed   int       `json:"downspeed"`
-	Upspeed     int       `json:"upspeed"`
-	Burstspeed  int       `json:"burstspeed"`
-	Duration    int       `json:"duration"`
-	Gateway     string    `json:"gateway"`
-	Priority    int       `json:"priority"`
-	DateEnd     time.Time `json:"date_end"`
-	DateExpires time.Time `json:"date_expires"`
-	PfconfigID  uint      `json:"pfconfig_id"`
-}
-
-type PfConfig struct {
-	Ifaces            []Iface   `json:"ifaces"`
-	WifiIpList        string    `json:"wifi_ip_list"`
-	SubsIpList        string    `json:"subs_ip_list"`
-	SubsPortalPort    int       `json:"subs_portal_port"`
-	CaptivePortalPort int       `json:"captive_portal_port"`
-	Router            string    `json:"router"`
-	LoadBalance       bool      `json:"load_balance"`
-	Vouchers          []Voucher `json:"vouchers"`
-	Dhcps             []Dhcp    `json:"dhcps"`
-	Subs              []Sub     `json:"subs"`
-}
-
-func GetSubs(url string, token *string) (*PfConfig, error) {
+func GetSubs(url string, token *string) (*pfconfigmodel.Pfconfig, error) {
 	client := &http.Client{}
 	req, _ := http.NewRequest("GET", url, nil)
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", *token))
@@ -98,36 +27,22 @@ func GetSubs(url string, token *string) (*PfConfig, error) {
 	if ioerr != nil {
 		return nil, ioerr
 	}
-	var cfg PfConfig
+	var cfg pfconfigmodel.Pfconfig
 	json.Unmarshal(responseData, &cfg)
 	return &cfg, nil
 }
 
-func (c *PfConfig) DhcpCreate(rundir string) error {
+func DhcpCreate(c *pfconfigmodel.Pfconfig, rundir string) error {
 	dhcp := ""
-	hosts := ""
 	for _, d := range c.Dhcps {
-		for _, h := range c.Subs {
-			if h.Type == d.Type {
-				host_block := heredoc.Docf(`
-  	host %s {
-    	hardware ethernet %s;
-    	fixed-address %s;
-  	}
-`, h.FirstName+fmt.Sprintf("%d", rand.IntN(100000))+h.LastName, strings.ToLower(h.Mac), h.FramedIp)
-				hosts = fmt.Sprintf("%s%s", hosts, host_block)
-			}
-		}
 		net_block := heredoc.Docf(`
 subnet %s netmask %s {
   option routers %s;
   option domain-name-servers %s, 8.8.8.8, 4.2.2.2;
   range %s;
-  %s
 }
-`, d.Subnet, d.Netmask, d.Routers, d.Dnsservers, d.Range, hosts)
+`, d.Subnet, d.Netmask, d.Routers, d.Dnsservers, d.Range)
 		dhcp = fmt.Sprintf("%s%s", dhcp, net_block)
-		hosts = ""
 	}
 	err := os.WriteFile(rundir+"dhcpd.conf", []byte(dhcp), 0600)
 	if err != nil {
@@ -137,7 +52,49 @@ subnet %s netmask %s {
 	return nil
 }
 
-func (c *PfConfig) Create(rundir string, urlbase string, t *string) error {
+func ConfigCreate(c *pfconfigmodel.Pfconfig) error {
+	dnslist := ""
+	for _, d := range c.Ifaces {
+		iface := fmt.Sprintf("inet %s %s\n", d.Ip, d.Netmask)
+		if d.Default {
+			if d.Ip != "autoconf" {
+				dnslist := fmt.Sprintf("%snameserver %s\n", dnslist, d.Gateway)
+				err := os.WriteFile("/etc/mygate", []byte(d.Gateway), 0640)
+				if err != nil {
+					log.Println(err)
+					return err
+				}
+				nservers := strings.Split(c.Dns, " ")
+				for _, dns := range nservers {
+					dnslist := fmt.Sprintf("%snameserver %s\n", dnslist, dns)
+				}
+				err := os.WriteFile("/etc/resolv.conf", []byte(dnslist), 0640)
+				if err != nil {
+					log.Println(err)
+					return err
+				}
+			}
+		}
+		err := os.WriteFile("/etc/hostname."+d.Device, []byte(iface), 0640)
+		if err != nil {
+			log.Println(err)
+			return err
+		}
+	}
+
+	for _, p := range c.Pflows {
+		iface := fmt.Sprintf("flowsrc %s flowdst %s\npflowproto %d\n", p.Src, p.Dst, p.Proto)
+		err := os.WriteFile("/etc/hostname."+p.Device, []byte(iface), 0640)
+		if err != nil {
+			log.Println(err)
+			return err
+		}
+	}
+
+	return nil
+}
+
+func PfCreate(c *pfconfigmodel.Pfconfig, rundir string, urlbase string, t *string) error {
 	var macros string
 	for _, v := range c.Ifaces {
 		macros = fmt.Sprintf("%s%s = \"%s\"\n", macros, v.Name, v.Device)
@@ -348,7 +305,13 @@ block in quick from <martians>
 		log.Println(err)
 		return err
 	}
-	err = newpfcfg.DhcpCreate(rundir)
+	err = DhcpCreate(c, rundir)
+	if err != nil {
+		log.Println(err)
+		return err
+	}
+
+	err = ConfigCreate(c, rundir)
 	if err != nil {
 		log.Println(err)
 		return err
@@ -356,7 +319,7 @@ block in quick from <martians>
 	return nil
 }
 
-func Init(config string) (*PfConfig, error) {
+func Init(config string) (*pfconfigmodel.Pfconfig, error) {
 	jsoncmdFile, err := os.Open(config)
 	if err != nil {
 		log.Println("Error during json open file: ", err)
@@ -368,7 +331,7 @@ func Init(config string) (*PfConfig, error) {
 		log.Println("Error during reading json content: ", err)
 		return nil, err
 	}
-	var cfg PfConfig
+	var cfg pfconfigmodel.Pfconfig
 	err = json.Unmarshal(byteValue, &cfg)
 	if err != nil {
 		log.Println("Error during unmarshal: ", err)

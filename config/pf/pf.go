@@ -154,6 +154,8 @@ set block-policy drop
 set loginterface egress 
 set skip on lo0
 set state-defaults pflow
+set limit states 500000
+set limit frags 10000
 `, rundir+c.WifiIpList, rundir+c.SubsIpList)
 	var queues string
 	var defiface string

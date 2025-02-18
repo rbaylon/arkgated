@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"net/http"
 
@@ -20,7 +20,11 @@ func Enroll(urlbase string, token *string, pf *pfconfigmodel.Pfconfig) error {
 	create_url := urlbase + "pfconfig/create"
 	query_url := urlbase + "pfconfig/query/" + pf.Router
 	client := &http.Client{}
-	req, _ := http.NewRequest("GET", query_url, nil)
+	req, err := http.NewRequest("GET", query_url, nil)
+  if err != nil {
+    log.Println(err)
+    return err
+  }
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", *token))
 	res, err := client.Do(req)
 	if err != nil {
@@ -31,11 +35,22 @@ func Enroll(urlbase string, token *string, pf *pfconfigmodel.Pfconfig) error {
 		res.Body.Close()
 		cfg, _ := json.Marshal(pf)
 		log.Println("Enrolling...")
-		req, _ = http.NewRequest("POST", create_url, bytes.NewBuffer(cfg))
+		req, err := http.NewRequest("POST", create_url, bytes.NewBuffer(cfg))
+		if err != nil {
+			log.Println("Failed to POST router", err)
+			return err
+		}
+		log.Println(*token)
 		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", *token))
-		res, _ = client.Do(req)
+		res, err := client.Do(req)
 		defer res.Body.Close()
 		if res.StatusCode != 200 {
+			b, err := io.ReadAll(res.Body)
+			if err != nil {
+				log.Println("Read body error",err)
+			}
+			log.Println(string(b))
+			log.Println("Failed to enroll router", err)
 			return fmt.Errorf("Failed to enroll router")
 		}
 	}
@@ -53,7 +68,7 @@ func GetToken(creds string, api_login_url string) (*string, error) {
 	if err != nil {
 		return nil, err
 	}
-	responseData, ioerr := ioutil.ReadAll(res.Body)
+	responseData, ioerr := io.ReadAll(res.Body)
 	if ioerr != nil {
 		return nil, ioerr
 	}

@@ -66,9 +66,9 @@ func ConfigCreate(c *pfconfigmodel.Pfconfig) error {
 				}
 				nservers := strings.Split(c.Dns, " ")
 				for _, dns := range nservers {
-					dnslist := fmt.Sprintf("%snameserver %s\n", dnslist, dns)
+					dnslist = fmt.Sprintf("%snameserver %s\n", dnslist, dns)
 				}
-				err := os.WriteFile("/etc/resolv.conf", []byte(dnslist), 0640)
+				err = os.WriteFile("/etc/resolv.conf", []byte(dnslist), 0640)
 				if err != nil {
 					log.Println(err)
 					return err
@@ -319,7 +319,7 @@ block in quick from <martians>
 		return err
 	}
 
-	err = ConfigCreate(c, rundir)
+	err = ConfigCreate(c)
 	if err != nil {
 		log.Println(err)
 		return err

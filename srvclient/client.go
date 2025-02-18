@@ -63,8 +63,11 @@ func GetToken(creds string, api_login_url string) (*string, error) {
 	req, _ := http.NewRequest("GET", api_login_url, nil)
 	req.Header.Set("Authorization", fmt.Sprintf("Basic %s", creds))
 	res, err := client.Do(req)
-
 	defer res.Body.Close()
+	log.Println("StatusCode",res.StatusCode)
+	if res.StatusCode != 200 {
+		log.Fatalln("API login failed")
+	}
 	if err != nil {
 		return nil, err
 	}

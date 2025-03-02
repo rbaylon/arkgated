@@ -26,4 +26,4 @@ arkgated
 rundir/subslist.txt
 rundir/wifilist.txt
 *.conf
-config.json
+rundir/config.json

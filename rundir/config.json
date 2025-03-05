@@ -1,8 +1,8 @@
 {
   "ifaces": [
-		{ "name": "lan", "device": "re0", "speed": "900M", "default": false, "type": "internal", "gateway": "172.17.0.1", "ip": "172.16.0.1", "netmask": "255.255.0.0", "lb_percentage": 0},
-		{ "name": "wan2", "device": "ure1", "speed": "500M", "default": false, "type": "external", "gateway": "192.168.1.1", "ip": "192.168.1.253", "netmask": "255.255.255.0", "lb_percentage": 0},
-		{ "name": "wan", "device": "ure0", "speed": "500M", "default": true, "type": "external", "gateway": "", "ip": "autoconf", "netmask": "", "lb_percentage": 100}
+		{ "name": "wan", "device": "re0", "speed": "900M", "default": true, "type": "external", "gateway": "192.168.1.1", "ip": "autoconf", "netmask": "", "lb_percentage": 0},
+		{ "name": "lan2", "device": "ure1", "speed": "900M", "default": false, "type": "internal", "gateway": "192.168.1.1", "ip": "172.17.0.1", "netmask": "255.255.0.0", "lb_percentage": 0},
+		{ "name": "lan", "device": "ure0", "speed": "900M", "default": false, "type": "internal", "gateway": "192.168.1.1", "ip": "172.16.0.1", "netmask": "255.255.0.0", "lb_percentage": 0}
   ],
   "wifi_ip_list": "wifilist.txt",
   "subs_ip_list": "subslist.txt",

@@ -11,6 +11,7 @@ import (
 
 	"github.com/MakeNowJust/heredoc"
 	pfconfigmodel "github.com/rbaylon/srvcman/modules/pfconfig/model"
+	planmodel "github.com/rbaylon/srvcman/modules/plans/model"
 )
 
 func GetSubs(url string, token *string) (*pfconfigmodel.Pfconfig, error) {
@@ -52,14 +53,14 @@ subnet %s netmask %s {
 	return nil
 }
 
-func ConfigCreate(c *pfconfigmodel.Pfconfig) error {
+func ConfigCreate(c *pfconfigmodel.Pfconfig, rundir string) error {
 	dnslist := ""
 	for _, d := range c.Ifaces {
 		iface := fmt.Sprintf("inet %s %s\n", d.Ip, d.Netmask)
 		if d.Default {
 			if d.Ip != "autoconf" {
 				dnslist := fmt.Sprintf("%snameserver %s\n", dnslist, d.Gateway)
-				err := os.WriteFile("/etc/mygate", []byte(d.Gateway), 0640)
+				err := os.WriteFile(rundir+"mygate", []byte(d.Gateway), 0640)
 				if err != nil {
 					log.Println(err)
 					return err
@@ -68,14 +69,14 @@ func ConfigCreate(c *pfconfigmodel.Pfconfig) error {
 				for _, dns := range nservers {
 					dnslist = fmt.Sprintf("%snameserver %s\n", dnslist, dns)
 				}
-				err = os.WriteFile("/etc/resolv.conf", []byte(dnslist), 0640)
+				err = os.WriteFile(rundir+"resolv.conf", []byte(dnslist), 0640)
 				if err != nil {
 					log.Println(err)
 					return err
 				}
 			}
 		}
-		err := os.WriteFile("/etc/hostname."+d.Device, []byte(iface), 0640)
+		err := os.WriteFile(rundir+"hostname."+d.Device, []byte(iface), 0640)
 		if err != nil {
 			log.Println(err)
 			return err
@@ -84,7 +85,7 @@ func ConfigCreate(c *pfconfigmodel.Pfconfig) error {
 
 	for _, p := range c.Pflows {
 		iface := fmt.Sprintf("flowsrc %s flowdst %s\npflowproto %d\n", p.Src, p.Dst, p.Proto)
-		err := os.WriteFile("/etc/hostname."+p.Device, []byte(iface), 0640)
+		err := os.WriteFile(rundir+"hostname."+p.Device, []byte(iface), 0640)
 		if err != nil {
 			log.Println(err)
 			return err
@@ -111,8 +112,10 @@ set block-policy drop
 set loginterface egress 
 set skip on lo0
 set state-defaults pflow
-set limit states 500000
-set limit frags 10000
+set limit table-entries 400000
+set optimization normal
+set limit states 2000000
+set limit src-nodes 2000000
 `, rundir+c.WifiIpList, rundir+c.SubsIpList)
 	var queues string
 	var defiface string
@@ -209,10 +212,29 @@ block in quick from <martians>
 		}
 	}
 
+	plans := make(map[string]string)
+	planlist := make(map[string]planmodel.Plan)
 	newpfcfg, err := GetSubs(urlbase+"pfconfig/query/"+c.Router, t)
 	if err != nil {
 		log.Println(err)
 		return err
+	}
+	plantables := ""
+	strules := ""
+	planqueue := ""
+	for _, v := range newpfcfg.Plans {
+		plans[v.Plan] = ""
+		planlist[v.Plan] = v
+		plantables = fmt.Sprintf("%stable <%s> persist file \"%swifilist.txt%s\"\n",plantables, v.Plan, rundir, v.Plan)
+		for _, i := range c.Ifaces {
+			if i.Type == "external" {
+				planqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM\n",  planqueue, v.Plan, i.Name, i.Name, v.SpeedTestUp, v.SpeedTestUp)	
+				strules = fmt.Sprintf("%spass out on $%s set queue %s%s tagged \"%s\"\n", strules, i.Name, v.Plan, i.Name, v.Plan)
+			} else {
+				planqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM\n", planqueue, v.Plan, i.Name, i.Name, v.SpeedTestDown, v.SpeedTestDown)
+				strules = fmt.Sprintf("%spass in quick on %s inet proto { tcp, udp } from <%s> to any port { 5060, 8080 } set queue %s%s tag \"%s\"\n", strules, i.Name, v.Plan, v.Plan, i.Name, v.Plan)
+			}
+		}
 	}
 	var subqueue string
 	var subpass string
@@ -246,36 +268,19 @@ block in quick from <martians>
 					priority = fmt.Sprintf("set prio %d", sub.Priority)
 				}
 				if i.Type == "external" {
-					subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM\n", subqueue, ident, i.Name, i.Name, sub.Upspeed, sub.Upspeed)
+					subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM\n", subqueue, ident, i.Name, i.Name, planlist[sub.Plan].Upspeed, planlist[sub.Plan].Upspeed)
 					subpass = fmt.Sprintf("%spass out on $%s set queue %s%s %s tagged \"%s\"\n",
 						subpass, i.Name, ident, i.Name, priority, ident)
-					/*ulbw := sub.Upspeed - 1
-					subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM\n",
-						subqueue, ident, i.Name, i.Name, sub.Upspeed, sub.Upspeed)
-					subqueue = fmt.Sprintf("%squeue %s%sack parent %s%s bandwidth 5M min 1M\n", subqueue, ident, i.Name, ident, i.Name)
-					subqueue = fmt.Sprintf("%squeue %s%sdata parent %s%s bandwidth %dM min 5M max %dM\n", subqueue, ident, i.Name, ident, i.Name, ulbw, sub.Upspeed)
-					subpass = fmt.Sprintf("%spass out on $%s set queue ( %s%sdata, %s%sack ) %s tagged \"%s\"\n",
-						subpass, i.Name, ident, i.Name, ident, i.Name, priority, ident)
-					*/
 				} else {
 					if i.Name == sub.Type {
-						//dlbw := sub.Downspeed - 1
 						gateways = ""
 						if sub.Gateway != "" {
 							gateways = fmt.Sprintf("route-to %s", sub.Gateway)
 						}
 						subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM burst %dM for %dms\n",
-							subqueue, ident, i.Name, i.Name, sub.Downspeed, sub.Downspeed, sub.Burstspeed, sub.Duration)
+							subqueue, ident, i.Name, i.Name, planlist[sub.Plan].Downspeed, planlist[sub.Plan].Downspeed, planlist[sub.Plan].Downspeed*2, 3000)
 						subpass = fmt.Sprintf("%spass in on $%s from %s %s set queue %s%s %s tag \"%s\"\n",
 							subpass, i.Name, sub.FramedIp, gateways, ident, i.Name, priority, ident)
-						/*
-							subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM\n",
-								subqueue, ident, i.Name, i.Name, sub.Downspeed, sub.Downspeed)
-							subqueue = fmt.Sprintf("%squeue %s%sack parent %s%s bandwidth 5M min 1M\n", subqueue, ident, i.Name, ident, i.Name)
-							subqueue = fmt.Sprintf("%squeue %s%sdata parent %s%s bandwidth %dM min 5M max %dM burst %dM for %dms\n", subqueue, ident, i.Name, ident, i.Name, dlbw, sub.Downspeed, sub.Burstspeed, sub.Duration)
-							subpass = fmt.Sprintf("%spass in on $%s from %s %s set queue ( %s%sdata, %s%sack ) %s tag \"%s\"\n",
-								subpass, i.Name, sub.FramedIp, gateways, ident, i.Name, ident, i.Name, priority, ident)
-						*/
 					}
 				}
 			}
@@ -291,6 +296,7 @@ block in quick from <martians>
 	for _, sub := range newpfcfg.Subs {
 		if sub.Status == "active" {
 			wifilist = fmt.Sprintf("%s%s\n", wifilist, sub.FramedIp)
+			plans[sub.Plan] = fmt.Sprintf("%s%s\n", plans[sub.Plan], sub.FramedIp)
 		} else {
 			subslist = fmt.Sprintf("%s%s\n", subslist, sub.FramedIp)
 		}
@@ -301,13 +307,21 @@ block in quick from <martians>
 		log.Println(err)
 		return err
 	}
+	for k, v := range plans {
+  	os.Rename(rundir+c.WifiIpList+k, rundir+c.WifiIpList+k+".old")
+  	err = os.WriteFile(rundir+c.WifiIpList+k, []byte(v), 0600)
+  	if err != nil {
+    	log.Println(err)
+    	return err
+  	}
+	}
 	os.Rename(rundir+c.SubsIpList, rundir+c.SubsIpList+".old")
 	err = os.WriteFile(rundir+c.SubsIpList, []byte(subslist), 0600)
 	if err != nil {
 		log.Println(err)
 		return err
 	}
-	configstring := macros + tables + queues + subqueue + matches + defaultblock + defaultqrules + passrules + subpass + lbrules
+	configstring := macros + plantables + tables + queues + planqueue + subqueue + matches + defaultblock + defaultqrules + passrules +  strules + subpass + lbrules
 	err = os.WriteFile(rundir+"pf.conf", []byte(configstring), 0600)
 	if err != nil {
 		log.Println(err)
@@ -319,7 +333,7 @@ block in quick from <martians>
 		return err
 	}
 
-	err = ConfigCreate(c)
+	err = ConfigCreate(c, rundir)
 	if err != nil {
 		log.Println(err)
 		return err

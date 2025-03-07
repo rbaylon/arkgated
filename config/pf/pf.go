@@ -229,10 +229,10 @@ block in quick from <martians>
 		for _, i := range c.Ifaces {
 			if i.Type == "external" {
 				planqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM\n",  planqueue, v.Plan, i.Name, i.Name, v.SpeedTestUp, v.SpeedTestUp)	
-				strules = fmt.Sprintf("%spass out on $%s set queue %s%s tagged \"%s\"\n", strules, i.Name, v.Plan, i.Name, v.Plan)
+				strules = fmt.Sprintf("%spass out quick on $%s set queue %s%s tagged \"%s\"\n", strules, i.Name, v.Plan, i.Name, v.Plan)
 			} else {
 				planqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM\n", planqueue, v.Plan, i.Name, i.Name, v.SpeedTestDown, v.SpeedTestDown)
-				strules = fmt.Sprintf("%spass in quick on %s inet proto { tcp, udp } from <%s> to any port { 5060, 8080 } set queue %s%s tag \"%s\"\n", strules, i.Name, v.Plan, v.Plan, i.Name, v.Plan)
+				strules = fmt.Sprintf("%spass in quick on $%s inet proto { tcp, udp } from <%s> to any port { 5060, 8080 } set queue %s%s tag \"%s\"\n", strules, i.Name, v.Plan, v.Plan, i.Name, v.Plan)
 			}
 		}
 	}

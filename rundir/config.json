@@ -1,14 +1,15 @@
 {
   "ifaces": [
-		{ "name": "wan", "device": "re0", "speed": "900M", "default": true, "type": "external", "gateway": "192.168.1.1", "ip": "autoconf", "netmask": "", "lb_percentage": 0},
-		{ "name": "lan2", "device": "ure1", "speed": "900M", "default": false, "type": "internal", "gateway": "192.168.1.1", "ip": "172.17.0.1", "netmask": "255.255.0.0", "lb_percentage": 0},
-		{ "name": "lan", "device": "ure0", "speed": "900M", "default": false, "type": "internal", "gateway": "192.168.1.1", "ip": "172.16.0.1", "netmask": "255.255.0.0", "lb_percentage": 0}
+    { "name": "wan", "device": "igc0", "speed": "600M", "default": false, "type": "external", "gateway": "192.168.254.254", "ip": "192.168.254.69", "netmask": "255.255.255.0", "lb_percentage": 0},
+    { "name": "wan2", "device": "igc1", "speed": "900M", "default": true, "type": "external", "gateway": "192.168.69.1", "ip": "192.168.69.69", "netmask": "255.255.255.0", "lb_percentage": 0},
+    { "name": "lan", "device": "igc3", "speed": "900M", "default": false, "type": "internal", "gateway": "192.168.1.1", "ip": "172.16.0.1", "netmask": "255.255.0.0", "lb_percentage": 0},
+    { "name": "lan2", "device": "igc2", "speed": "900M", "default": false, "type": "internal", "gateway": "192.168.1.1", "ip": "172.17.0.1", "netmask": "255.255.0.0", "lb_percentage": 0}
   ],
   "wifi_ip_list": "wifilist.txt",
   "subs_ip_list": "subslist.txt",
   "subs_portal_port": 4000,
   "captive_portal_port": 3000,
-  "router": "testopenbsd",
+  "router": "devopenbsd",
   "load_balance": false,
   "dhcps": [
     { "subnet": "172.16.0.0", "netmask": "255.255.0.0", "routers": "172.16.0.1", "dnsservers": "172.16.0.1", "range": "172.16.1.1 172.16.9.255", "type": "lan" }

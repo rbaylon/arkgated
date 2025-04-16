@@ -268,7 +268,6 @@ block in quick from <martians>
 					subpass = fmt.Sprintf("%spass out on $%s set queue %s%s tagged \"%s\"\n",
 						subpass, i.Name, voucher.Value, i.Name, voucher.Value)
 				} else {
-					
 					gateways = ""
 					if voucher.Gateway != "" {
 						gateways = fmt.Sprintf("route-to %s", voucher.Gateway)

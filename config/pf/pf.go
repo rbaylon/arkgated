@@ -268,16 +268,15 @@ block in quick from <martians>
 					subpass = fmt.Sprintf("%spass out on $%s set queue %s%s tagged \"%s\"\n",
 						subpass, i.Name, voucher.Value, i.Name, voucher.Value)
 				} else {
-					if i.Name == voucher.Type {
-						gateways = ""
-						if voucher.Gateway != "" {
-							gateways = fmt.Sprintf("route-to %s", voucher.Gateway)
-						}
-						subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM burst %dM for %dms\n",
-							subqueue, voucher.Value, i.Name, i.Name, voucher.Downspeed, voucher.Downspeed, voucher.Burstspeed, voucher.Duration)
-						subpass = fmt.Sprintf("%spass in on $%s from %s %s set queue %s%s tag \"%s\"\n",
-							subpass, i.Name, voucher.Ip, gateways, voucher.Value, i.Name, voucher.Value)
+					
+					gateways = ""
+					if voucher.Gateway != "" {
+						gateways = fmt.Sprintf("route-to %s", voucher.Gateway)
 					}
+					subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM burst %dM for %dms\n",
+						subqueue, voucher.Value, i.Name, i.Name, voucher.Downspeed, voucher.Downspeed, voucher.Burstspeed, voucher.Duration)
+					subpass = fmt.Sprintf("%spass in on $%s from %s %s set queue %s%s tag \"%s\"\n",
+						subpass, i.Name, voucher.Ip, gateways, voucher.Value, i.Name, voucher.Value)
 				}
 			}
 		}

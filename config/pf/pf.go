@@ -272,16 +272,14 @@ block in quick from <martians>
 					subpass = fmt.Sprintf("%spass out on $%s set queue %s%s %s tagged \"%s\"\n",
 						subpass, i.Name, ident, i.Name, priority, ident)
 				} else {
-					if i.Name == sub.Type {
-						gateways = ""
-						if sub.Gateway != "" {
-							gateways = fmt.Sprintf("route-to %s", sub.Gateway)
-						}
-						subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM burst %dM for %dms\n",
-							subqueue, ident, i.Name, i.Name, planlist[sub.Plan].Downspeed, planlist[sub.Plan].Downspeed, planlist[sub.Plan].Downspeed*2, 3000)
-						subpass = fmt.Sprintf("%spass in on $%s from %s %s set queue %s%s %s tag \"%s\"\n",
-							subpass, i.Name, sub.FramedIp, gateways, ident, i.Name, priority, ident)
+					gateways = ""
+					if sub.Gateway != "" {
+						gateways = fmt.Sprintf("route-to %s", sub.Gateway)
 					}
+					subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM burst %dM for %dms\n",
+						subqueue, ident, i.Name, i.Name, planlist[sub.Plan].Downspeed, planlist[sub.Plan].Downspeed, planlist[sub.Plan].Downspeed*2, 3000)
+					subpass = fmt.Sprintf("%spass in on $%s from %s %s set queue %s%s %s tag \"%s\"\n",
+						subpass, i.Name, sub.FramedIp, gateways, ident, i.Name, priority, ident)
 				}
 			}
 		}

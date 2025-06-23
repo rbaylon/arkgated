@@ -27,3 +27,4 @@ rundir/subslist.txt
 rundir/wifilist.txt
 *.conf
 rundir/config.json
+sample.config

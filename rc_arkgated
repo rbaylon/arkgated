@@ -1,0 +1,28 @@
+#!/bin/ksh
+
+daemon="/usr/local/arkgate/arkgated/arkgated"
+daemon_flags=-config ${workdir}/rundir/daemon.config
+daemon_rtable=0
+
+. /etc/rc.d/rc.subr
+
+rc_reload_signal=HUP
+rc_stop_signal=TERM
+
+rc_start() {
+	rc_exec "${daemon} ${daemon_flags}"
+}
+
+rc_check() {
+	pgrep -T "${daemon_rtable}" -q -xf "${pexp}"
+}
+
+rc_reload() {
+	pkill -${rc_reload_signal} -T "${daemon_rtable}" -xf "${pexp}"
+}
+
+rc_stop() {
+	pkill -${rc_stop_signal} -T "${daemon_rtable}" -xf "${pexp}"
+}
+
+rc_cmd $1

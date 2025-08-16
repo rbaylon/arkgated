@@ -53,6 +53,36 @@ subnet %s netmask %s {
 	return nil
 }
 
+func DnsCreate(c *pfconfigmodel.Pfconfig, rundir string) error {
+	outifaces := ""
+	for _, d := range c.Ifaces {
+		if d.Type == "external" {
+			outifaces = fmt.Sprintf("%s\toutgoing-interface: %s\n", outifaces, d.Gateway)
+		}
+	}
+	dnsblock := heredoc.Docf(`
+server:
+	interface: 0.0.0.0
+	%s
+    access-control: 172.16.0.0/12 allow
+    do-not-query-localhost: no
+    hide-identity: yes
+    hide-version: yes
+    prefetch: yes
+
+forward-zone:
+        name: "."
+        forward-addr: 8.8.8.8  # IP of the preferred upstream resolver
+        forward-addr: 4.2.2.2
+	`, outifaces)
+	err := os.WriteFile(rundir+"unbound.conf", []byte(dnsblock), 0600)
+	if err != nil {
+		log.Println(err)
+		return err
+	}
+	return nil
+}
+
 func ConfigCreate(c *pfconfigmodel.Pfconfig, rundir string) error {
 	dnslist := ""
 	for _, d := range c.Ifaces {
@@ -225,16 +255,16 @@ block in quick from <martians>
 	for _, v := range newpfcfg.Plans {
 		plans[v.Plan] = ""
 		planlist[v.Plan] = v
-		plantables = fmt.Sprintf("%stable <%s> persist file \"%swifilist.txt%s\"\n",plantables, v.Plan, rundir, v.Plan)
-		for _, i := range c.Ifaces {
-			if i.Type == "external" {
-				planqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM\n",  planqueue, v.Plan, i.Name, i.Name, v.SpeedTestUp, v.SpeedTestUp)	
-				strules = fmt.Sprintf("%spass out quick on $%s set queue %s%s tagged \"%s\"\n", strules, i.Name, v.Plan, i.Name, v.Plan)
-			} else {
-				planqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM\n", planqueue, v.Plan, i.Name, i.Name, v.SpeedTestDown, v.SpeedTestDown)
-				strules = fmt.Sprintf("%spass in quick on $%s inet proto { tcp, udp } from <%s> to any port { 5060, 8080 } set queue %s%s tag \"%s\"\n", strules, i.Name, v.Plan, v.Plan, i.Name, v.Plan)
-			}
-		}
+		//plantables = fmt.Sprintf("%stable <%s> persist file \"%swifilist.txt%s\"\n", plantables, v.Plan, rundir, v.Plan)
+		//for _, i := range c.Ifaces {
+		//	if i.Type == "external" {
+		//planqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM\n", planqueue, v.Plan, i.Name, i.Name, v.SpeedTestUp, v.SpeedTestUp)
+		//strules = fmt.Sprintf("%spass out quick on $%s set queue %s%s set prio 7 tagged \"%s\"\n", strules, i.Name, v.Plan, i.Name, v.Plan)
+		//	} else {
+		//planqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM\n", planqueue, v.Plan, i.Name, i.Name, v.SpeedTestDown, v.SpeedTestDown)
+		//strules = fmt.Sprintf("%spass in quick on $%s inet proto { tcp, udp } from <%s> to any port { 5060, 8080 } set queue %s%s set prio 7 tag \"%s\"\n", strules, i.Name, v.Plan, v.Plan, i.Name, v.Plan)
+		//	}
+		//}
 	}
 	var subqueue string
 	var subpass string
@@ -266,7 +296,15 @@ block in quick from <martians>
 					priority = fmt.Sprintf("set prio %d", sub.Priority)
 				}
 				if i.Type == "external" {
-					subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM\n", subqueue, ident, i.Name, i.Name, planlist[sub.Plan].Upspeed, planlist[sub.Plan].Upspeed)
+					subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM\n",
+						subqueue, ident, i.Name, i.Name, planlist[sub.Plan].Upspeed, planlist[sub.Plan].Upspeed)
+
+					subqueue = fmt.Sprintf("%squeue %s%stest parent %s bandwidth %dM min 5M max %dM\n",
+						subqueue, ident, i.Name, i.Name, planlist[sub.Plan].SpeedTestUp, planlist[sub.Plan].SpeedTestUp)
+
+					subpass = fmt.Sprintf("%spass out quick on $%s set queue %s%stest set prio 7 tagged \"%stest\"\n",
+						subpass, i.Name, ident, i.Name, ident)
+
 					subpass = fmt.Sprintf("%spass out on $%s set queue %s%s %s tagged \"%s\"\n",
 						subpass, i.Name, ident, i.Name, priority, ident)
 				} else {
@@ -277,6 +315,12 @@ block in quick from <martians>
 						}
 						subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM burst %dM for %dms\n",
 							subqueue, ident, i.Name, i.Name, planlist[sub.Plan].Downspeed, planlist[sub.Plan].Downspeed, planlist[sub.Plan].Downspeed*2, 3000)
+
+						subqueue = fmt.Sprintf("%squeue %s%stest parent %s bandwidth %dM min 5M max %dM\n", subqueue, ident, i.Name, i.Name, planlist[sub.Plan].SpeedTestDown, planlist[sub.Plan].SpeedTestDown)
+
+						subpass = fmt.Sprintf("%spass in quick on $%s inet proto { tcp, udp } from <%s> to any port { 5060, 8080 } %s set queue %s%stest set prio 7 tag \"%stest\"\n",
+							subpass, i.Name, sub.FramedIp, gateways, ident, i.Name, ident)
+
 						subpass = fmt.Sprintf("%spass in on $%s from %s %s set queue %s%s %s tag \"%s\"\n",
 							subpass, i.Name, sub.FramedIp, gateways, ident, i.Name, priority, ident)
 					}
@@ -306,12 +350,12 @@ block in quick from <martians>
 		return err
 	}
 	for k, v := range plans {
-  	os.Rename(rundir+c.WifiIpList+k, rundir+c.WifiIpList+k+".old")
-  	err = os.WriteFile(rundir+c.WifiIpList+k, []byte(v), 0600)
-  	if err != nil {
-    	log.Println(err)
-    	return err
-  	}
+		os.Rename(rundir+c.WifiIpList+k, rundir+c.WifiIpList+k+".old")
+		err = os.WriteFile(rundir+c.WifiIpList+k, []byte(v), 0600)
+		if err != nil {
+			log.Println(err)
+			return err
+		}
 	}
 	os.Rename(rundir+c.SubsIpList, rundir+c.SubsIpList+".old")
 	err = os.WriteFile(rundir+c.SubsIpList, []byte(subslist), 0600)
@@ -319,13 +363,19 @@ block in quick from <martians>
 		log.Println(err)
 		return err
 	}
-	configstring := macros + plantables + tables + queues + planqueue + subqueue + matches + defaultblock + defaultqrules + passrules +  strules + subpass + lbrules
+	configstring := macros + plantables + tables + queues + planqueue + subqueue + matches + defaultblock + defaultqrules + passrules + strules + subpass + lbrules
 	err = os.WriteFile(rundir+"pf.conf", []byte(configstring), 0600)
 	if err != nil {
 		log.Println(err)
 		return err
 	}
 	err = DhcpCreate(c, rundir)
+	if err != nil {
+		log.Println(err)
+		return err
+	}
+
+	err = DnsCreate(c, rundir)
 	if err != nil {
 		log.Println(err)
 		return err

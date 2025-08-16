@@ -318,7 +318,7 @@ block in quick from <martians>
 
 						subqueue = fmt.Sprintf("%squeue %s%stest parent %s bandwidth %dM min 5M max %dM\n", subqueue, ident, i.Name, i.Name, planlist[sub.Plan].SpeedTestDown, planlist[sub.Plan].SpeedTestDown)
 
-						subpass = fmt.Sprintf("%spass in quick on $%s inet proto { tcp, udp } from <%s> to any port { 5060, 8080 } %s set queue %s%stest set prio 7 tag \"%stest\"\n",
+						subpass = fmt.Sprintf("%spass in quick on $%s inet proto { tcp, udp } from %s to any port { 5060, 8080 } %s set queue %s%stest set prio 7 tag \"%stest\"\n",
 							subpass, i.Name, sub.FramedIp, gateways, ident, i.Name, ident)
 
 						subpass = fmt.Sprintf("%spass in on $%s from %s %s set queue %s%s %s tag \"%s\"\n",

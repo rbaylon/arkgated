@@ -150,10 +150,10 @@ set limit src-nodes 2000000
 	var defiface string
 	for _, v := range c.Ifaces {
 		if v.Type == "external" {
-			queues = fmt.Sprintf("%squeue %s on { $%s } bandwidth %s\nqueue %sdef parent %s bandwidth %s default\n",
+			queues = fmt.Sprintf("%squeue %s on { $%s } bandwidth %s qlimit 1024\nqueue %sdef parent %s bandwidth %s qlimit 1024 default\n",
 				queues, v.Name, v.Name, v.Speed, v.Name, v.Name, v.Speed)
 		} else {
-			queues = fmt.Sprintf("%squeue %s on { $%s } bandwidth %s\nqueue %sdef parent %s bandwidth 100M default\n",
+			queues = fmt.Sprintf("%squeue %s on { $%s } bandwidth %s qlimit 1024 \nqueue %sdef parent %s bandwidth 100M qlimit 1024 default\n",
 				queues, v.Name, v.Name, v.Speed, v.Name, v.Name)
 		}
 		if v.Default {
@@ -311,13 +311,13 @@ block in quick from <martians>
 						if sub.Gateway != "" {
 							gateways = fmt.Sprintf("route-to %s", sub.Gateway)
 						}
-						subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM\n",
+						subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM qlimit 1024\n",
 							subqueue, ident, i.Name, i.Name, planlist[sub.Plan].Downspeed, planlist[sub.Plan].Downspeed)
 
-						subqueue = fmt.Sprintf("%squeue %s%slow parent %s bandwidth 5M min 2M\n",
+						subqueue = fmt.Sprintf("%squeue %s%slow parent %s bandwidth 5M min 2M qlimit 512\n",
 							subqueue, ident, i.Name, i.Name)
 
-						subqueue = fmt.Sprintf("%squeue %s%stest parent %s bandwidth %dM min 5M max %dM\n", subqueue, ident, i.Name, i.Name, planlist[sub.Plan].SpeedTestDown, planlist[sub.Plan].SpeedTestDown)
+						subqueue = fmt.Sprintf("%squeue %s%stest parent %s bandwidth %dM min 5M max %dM qlimit 1024\n", subqueue, ident, i.Name, i.Name, planlist[sub.Plan].SpeedTestDown, planlist[sub.Plan].SpeedTestDown)
 
 						subpass = fmt.Sprintf("%spass in quick on $%s inet proto { tcp, udp } from %s to any port { 5060, 8080 } %s set queue (%s%stest, %s%slow) set prio 7 tag \"%stest\"\n",
 							subpass, i.Name, sub.FramedIp, gateways, ident, i.Name, ident, i.Name, ident)

@@ -141,7 +141,6 @@ table <martians> { 0.0.0.0/8 169.254.0.0/16  \
 set block-policy drop 
 set loginterface egress 
 set skip on lo0
-set state-defaults pflow
 set limit table-entries 400000
 set optimization normal
 set limit states 2000000
@@ -154,7 +153,7 @@ set limit src-nodes 2000000
 			queues = fmt.Sprintf("%squeue %s on { $%s } bandwidth %s\nqueue %sdef parent %s bandwidth %s default\n",
 				queues, v.Name, v.Name, v.Speed, v.Name, v.Name, v.Speed)
 		} else {
-			queues = fmt.Sprintf("%squeue %s on { $%s } bandwidth %s\nqueue %sdef parent %s bandwidth 2M default\n",
+			queues = fmt.Sprintf("%squeue %s on { $%s } bandwidth %s\nqueue %sdef parent %s bandwidth 100M default\n",
 				queues, v.Name, v.Name, v.Speed, v.Name, v.Name)
 		}
 		if v.Default {

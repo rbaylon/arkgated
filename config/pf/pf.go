@@ -150,8 +150,13 @@ set limit src-nodes 2000000
 	var queues string
 	var defiface string
 	for _, v := range c.Ifaces {
-		queues = fmt.Sprintf("%squeue %s on { $%s } bandwidth %s\nqueue %sdef parent %s bandwidth 2M default\n",
-			queues, v.Name, v.Name, v.Speed, v.Name, v.Name)
+		if v.Type == "external" {
+			queues = fmt.Sprintf("%squeue %s on { $%s } bandwidth %s\nqueue %sdef parent %s bandwidth %s default\n",
+				queues, v.Name, v.Name, v.Speed, v.Name, v.Name, v.Speed)
+		} else {
+			queues = fmt.Sprintf("%squeue %s on { $%s } bandwidth %s\nqueue %sdef parent %s bandwidth 2M default\n",
+				queues, v.Name, v.Name, v.Speed, v.Name, v.Name)
+		}
 		if v.Default {
 			defiface = v.Name
 		}

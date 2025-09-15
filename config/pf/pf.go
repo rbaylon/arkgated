@@ -141,7 +141,6 @@ table <martians> { 0.0.0.0/8 169.254.0.0/16  \
 set block-policy drop 
 set loginterface egress 
 set skip on lo0
-set state-defaults pflow
 set limit table-entries 400000
 set optimization normal
 set limit states 2000000
@@ -152,6 +151,8 @@ set limit src-nodes 2000000
 	for _, v := range c.Ifaces {
 		queues = fmt.Sprintf("%squeue %s on { $%s } bandwidth %s\nqueue %sdef parent %s bandwidth 2M default\n",
 			queues, v.Name, v.Name, v.Speed, v.Name, v.Name)
+		queues = fmt.Sprintf("%squeue %slow parent %s bandwidth 20M qlimit 1014\n",
+			queues, v.Name, v.Name)
 		if v.Default {
 			defiface = v.Name
 		}
@@ -198,22 +199,18 @@ block in quick from <martians>
 	for _, v := range c.Ifaces {
 		if v.Type == "external" {
 			extifs = append(extifs, v.Name)
-			gws = append(gws, v.Gateway)
+			gws = append(gws, fmt.Sprintf("%s weight %s", v.Gateway, v.LbPercentage))
 		}
 	}
 	var gateways string
 	var lbrules string
+	newpfcfg, err := GetSubs(urlbase+"pfconfig/query/"+c.Router, t)
+	if err != nil {
+		log.Println(err)
+		return err
+	}
 	if c.LoadBalance {
-		gateways = fmt.Sprintf("route-to { %s } round-robin sticky-address", strings.Join(gws, " "))
-		for _, g := range extifs {
-			for _, v := range c.Ifaces {
-				if v.Type == "external" {
-					if v.Name != g {
-						lbrules = fmt.Sprintf("%spass out on $%s from $%s route-to %s\n", lbrules, g, v.Name, v.Gateway)
-					}
-				}
-			}
-		}
+		gateways = fmt.Sprintf("route-to { %s } round-robin sticky-address", strings.Join(gws, ", "))
 	} else {
 		gateways = ""
 		lbrules = ""
@@ -244,11 +241,6 @@ block in quick from <martians>
 
 	plans := make(map[string]string)
 	planlist := make(map[string]planmodel.Plan)
-	newpfcfg, err := GetSubs(urlbase+"pfconfig/query/"+c.Router, t)
-	if err != nil {
-		log.Println(err)
-		return err
-	}
 	plantables := ""
 	strules := ""
 	planqueue := ""
@@ -277,7 +269,6 @@ block in quick from <martians>
 					subpass = fmt.Sprintf("%spass out on $%s set queue %s%s tagged \"%s\"\n",
 						subpass, i.Name, voucher.Value, i.Name, voucher.Value)
 				} else {
-					gateways = ""
 					if voucher.Gateway != "" {
 						gateways = fmt.Sprintf("route-to %s", voucher.Gateway)
 					}
@@ -296,33 +287,32 @@ block in quick from <martians>
 					priority = fmt.Sprintf("set prio %d", sub.Priority)
 				}
 				if i.Type == "external" {
-					subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM\n",
+					subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM qlimit 1014\n",
 						subqueue, ident, i.Name, i.Name, planlist[sub.Plan].Upspeed, planlist[sub.Plan].Upspeed)
 
-					subqueue = fmt.Sprintf("%squeue %s%stest parent %s bandwidth %dM min 5M max %dM\n",
+					subqueue = fmt.Sprintf("%squeue %s%stest parent %s bandwidth %dM min 5M max %dM qlimit 1014\n",
 						subqueue, ident, i.Name, i.Name, planlist[sub.Plan].SpeedTestUp, planlist[sub.Plan].SpeedTestUp)
 
-					subpass = fmt.Sprintf("%spass out quick on $%s set queue %s%stest set prio 7 tagged \"%stest\"\n",
-						subpass, i.Name, ident, i.Name, ident)
+					subpass = fmt.Sprintf("%spass out quick on $%s set queue (%s%stest, %slow) set prio 7 tagged \"%stest\"\n",
+						subpass, i.Name, ident, i.Name, i.Name, ident)
 
-					subpass = fmt.Sprintf("%spass out on $%s set queue %s%s %s tagged \"%s\"\n",
-						subpass, i.Name, ident, i.Name, priority, ident)
+					subpass = fmt.Sprintf("%spass out on $%s set queue (%s%s, %slow) %s tagged \"%s\"\n",
+						subpass, i.Name, ident, i.Name, i.Name, priority, ident)
 				} else {
 					if i.Name == sub.Type {
-						gateways = ""
 						if sub.Gateway != "" {
 							gateways = fmt.Sprintf("route-to %s", sub.Gateway)
 						}
-						subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM burst %dM for %dms\n",
+						subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM burst %dM for %dms qlimit 1014\n",
 							subqueue, ident, i.Name, i.Name, planlist[sub.Plan].Downspeed, planlist[sub.Plan].Downspeed, planlist[sub.Plan].Downspeed*2, 3000)
 
-						subqueue = fmt.Sprintf("%squeue %s%stest parent %s bandwidth %dM min 5M max %dM\n", subqueue, ident, i.Name, i.Name, planlist[sub.Plan].SpeedTestDown, planlist[sub.Plan].SpeedTestDown)
+						subqueue = fmt.Sprintf("%squeue %s%stest parent %s bandwidth %dM min 5M max %dM qlimit 1014\n", subqueue, ident, i.Name, i.Name, planlist[sub.Plan].SpeedTestDown, planlist[sub.Plan].SpeedTestDown)
 
-						subpass = fmt.Sprintf("%spass in quick on $%s inet proto { tcp, udp } from %s to any port { 5060, 8080 } %s set queue %s%stest set prio 7 tag \"%stest\"\n",
-							subpass, i.Name, sub.FramedIp, gateways, ident, i.Name, ident)
+						subpass = fmt.Sprintf("%spass in quick on $%s inet proto { tcp, udp } from %s to any port { 5060, 8080 } %s set queue (%s%stest, %slow) set prio 7 tag \"%stest\"\n",
+							subpass, i.Name, sub.FramedIp, gateways, ident, i.Name, i.Name, ident)
 
-						subpass = fmt.Sprintf("%spass in on $%s from %s %s set queue %s%s %s tag \"%s\"\n",
-							subpass, i.Name, sub.FramedIp, gateways, ident, i.Name, priority, ident)
+						subpass = fmt.Sprintf("%spass in on $%s from %s %s set queue (%s%s, %slow) %s tag \"%s\"\n",
+							subpass, i.Name, sub.FramedIp, gateways, ident, i.Name, i.Name, priority, ident)
 					}
 				}
 			}

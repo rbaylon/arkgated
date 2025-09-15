@@ -156,6 +156,8 @@ set limit src-nodes 2000000
 			queues = fmt.Sprintf("%squeue %s on { $%s } bandwidth %s qlimit 1024 \nqueue %sdef parent %s bandwidth 100M qlimit 1024 default\n",
 				queues, v.Name, v.Name, v.Speed, v.Name, v.Name)
 		}
+		queues = fmt.Sprintf("%squeue %slow parent %s bandwidth 20M qlimit 1024\n",
+			queues, v.Name, v.Name)
 		if v.Default {
 			defiface = v.Name
 		}
@@ -314,16 +316,13 @@ block in quick from <martians>
 						subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM qlimit 1024\n",
 							subqueue, ident, i.Name, i.Name, planlist[sub.Plan].Downspeed, planlist[sub.Plan].Downspeed)
 
-						subqueue = fmt.Sprintf("%squeue %s%slow parent %s bandwidth 5M min 2M qlimit 512\n",
-							subqueue, ident, i.Name, i.Name)
-
 						subqueue = fmt.Sprintf("%squeue %s%stest parent %s bandwidth %dM min 5M max %dM qlimit 1024\n", subqueue, ident, i.Name, i.Name, planlist[sub.Plan].SpeedTestDown, planlist[sub.Plan].SpeedTestDown)
 
-						subpass = fmt.Sprintf("%spass in quick on $%s inet proto { tcp, udp } from %s to any port { 5060, 8080 } keep state %s set queue (%s%stest, %s%slow) set prio 7 tag \"%stest\"\n",
-							subpass, i.Name, sub.FramedIp, gateways, ident, i.Name, ident, i.Name, ident)
+						subpass = fmt.Sprintf("%spass in quick on $%s inet proto { tcp, udp } from %s to any port { 5060, 8080 } keep state %s set queue (%s%stest, %slow) set prio 7 tag \"%stest\"\n",
+							subpass, i.Name, sub.FramedIp, gateways, ident, i.Name, i.Name, ident)
 
-						subpass = fmt.Sprintf("%spass in on $%s from %s keep state %s set queue (%s%s, %s%slow) %s tag \"%s\"\n",
-							subpass, i.Name, sub.FramedIp, gateways, ident, i.Name, ident, i.Name, priority, ident)
+						subpass = fmt.Sprintf("%spass in on $%s from %s keep state %s set queue (%s%s, %slow) %s tag \"%s\"\n",
+							subpass, i.Name, sub.FramedIp, gateways, ident, i.Name, i.Name, priority, ident)
 					}
 				}
 			}

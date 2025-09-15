@@ -145,6 +145,7 @@ set limit table-entries 400000
 set optimization normal
 set limit states 2000000
 set limit src-nodes 2000000
+set limit anchors 10240
 `, rundir+c.WifiIpList, rundir+c.SubsIpList)
 	var queues string
 	var defiface string

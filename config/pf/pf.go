@@ -195,10 +195,10 @@ block in quick from <martians>
 	}
 	var passrules string
 	var gws []string
-	var extifs []string
+	//var extifs []string
 	for _, v := range c.Ifaces {
 		if v.Type == "external" {
-			extifs = append(extifs, v.Name)
+			//extifs = append(extifs, v.Name)
 			gws = append(gws, fmt.Sprintf("%s weight %d", v.Gateway, v.LbPercentage))
 		}
 	}

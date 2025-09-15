@@ -199,7 +199,7 @@ block in quick from <martians>
 	for _, v := range c.Ifaces {
 		if v.Type == "external" {
 			extifs = append(extifs, v.Name)
-			gws = append(gws, fmt.Sprintf("%s weight %s", v.Gateway, v.LbPercentage))
+			gws = append(gws, fmt.Sprintf("%s weight %d", v.Gateway, v.LbPercentage))
 		}
 	}
 	var gateways string

@@ -147,8 +147,8 @@ set limit { anchors 10240, table-entries 400000, states 2000000, src-nodes 20000
 	var queues string
 	var defiface string
 	for _, v := range c.Ifaces {
-		queues = fmt.Sprintf("%squeue %s on { $%s } bandwidth %s\nqueue %sdef parent %s bandwidth 2M default\n",
-			queues, v.Name, v.Name, v.Speed, v.Name, v.Name)
+		queues = fmt.Sprintf("%squeue %s on { $%s } bandwidth %s\nqueue %sdef parent %s bandwidth %s default\n",
+			queues, v.Name, v.Name, v.Speed, v.Name, v.Name, v.Speed)
 		queues = fmt.Sprintf("%squeue %slow parent %s bandwidth 20M qlimit 1024\n",
 			queues, v.Name, v.Name)
 		if v.Default {

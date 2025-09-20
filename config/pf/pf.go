@@ -141,10 +141,8 @@ table <martians> { 0.0.0.0/8 169.254.0.0/16  \
 set block-policy drop 
 set loginterface egress 
 set skip on lo0
-set limit table-entries 400000
 set optimization normal
-set limit states 2000000
-set limit src-nodes 2000000
+set limit { anchors 10240, table-entries 400000, states 2000000, src-nodes 2000000 }
 `, rundir+c.WifiIpList, rundir+c.SubsIpList)
 	var queues string
 	var defiface string

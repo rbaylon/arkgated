@@ -258,6 +258,7 @@ block in quick from <martians>
 	}
 	var subqueue string
 	var subpass string
+	var gateway string
 	for _, i := range c.Ifaces {
 		for _, voucher := range newpfcfg.Vouchers {
 			if voucher.Status == "active" {
@@ -268,12 +269,14 @@ block in quick from <martians>
 						subpass, i.Name, voucher.Value, i.Name, voucher.Value)
 				} else {
 					if voucher.Gateway != "" {
-						gateways = fmt.Sprintf("route-to %s", voucher.Gateway)
+						gateway = fmt.Sprintf("route-to %s", voucher.Gateway)
+					} else {
+						gateway = gateways
 					}
 					subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM burst %dM for %dms\n",
 						subqueue, voucher.Value, i.Name, i.Name, voucher.Downspeed, voucher.Downspeed, voucher.Burstspeed, voucher.Duration)
 					subpass = fmt.Sprintf("%spass in on $%s from %s %s set queue %s%s tag \"%s\"\n",
-						subpass, i.Name, voucher.Ip, gateways, voucher.Value, i.Name, voucher.Value)
+						subpass, i.Name, voucher.Ip, gateway, voucher.Value, i.Name, voucher.Value)
 				}
 			}
 		}
@@ -299,7 +302,9 @@ block in quick from <martians>
 				} else {
 					if i.Name == sub.Type {
 						if sub.Gateway != "" {
-							gateways = fmt.Sprintf("route-to %s", sub.Gateway)
+							gateway = fmt.Sprintf("route-to %s", sub.Gateway)
+						} else {
+							gateway = gateways
 						}
 						subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM burst %dM for %dms qlimit 1024\n",
 							subqueue, ident, i.Name, i.Name, planlist[sub.Plan].Downspeed, planlist[sub.Plan].Downspeed, planlist[sub.Plan].Downspeed*2, 3000)
@@ -307,10 +312,10 @@ block in quick from <martians>
 						//subqueue = fmt.Sprintf("%squeue %s%stest parent %s bandwidth %dM min 5M max %dM qlimit 1024\n", subqueue, ident, i.Name, i.Name, planlist[sub.Plan].SpeedTestDown, planlist[sub.Plan].SpeedTestDown)
 
 						//subpass = fmt.Sprintf("%spass in quick on $%s inet proto { tcp, udp } from %s to any port { 5060, 8080 } %s set queue (%s%stest, %slow) set prio 7 tag \"%stest\"\n",
-						//subpass, i.Name, sub.FramedIp, gateways, ident, i.Name, i.Name, ident)
+						//subpass, i.Name, sub.FramedIp, gateway, ident, i.Name, i.Name, ident)
 
 						subpass = fmt.Sprintf("%spass in on $%s from %s %s set queue (%s%s, %slow) %s tag \"%s\"\n",
-							subpass, i.Name, sub.FramedIp, gateways, ident, i.Name, i.Name, priority, ident)
+							subpass, i.Name, sub.FramedIp, gateway, ident, i.Name, i.Name, priority, ident)
 					}
 				}
 			}

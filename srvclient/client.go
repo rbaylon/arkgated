@@ -7,7 +7,10 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
+	"time"
 
+	Arkcommand "github.com/rbaylon/arkgated/arkcommand"
 	pfconfigmodel "github.com/rbaylon/srvcman/modules/pfconfig/model"
 )
 
@@ -92,4 +95,17 @@ func GetToken(creds string, api_login_url string) (*string, error) {
 	var t Token
 	json.Unmarshal(responseData, &t)
 	return &t.Jwt, nil
+}
+
+func GenSysTats(cmd *Arkcommand.Arkcmd) {
+	for {
+		ret, out := cmd.RunWithOutput()
+		if ret == 0 {
+			err := os.WriteFile("/tmp/mystats", out, 0644)
+			if err != nil {
+				log.Println(err)
+			}
+		}
+		time.Sleep(10 * time.Second)
+	}
 }

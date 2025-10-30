@@ -20,6 +20,7 @@ type Arkcmds struct {
 
 type Cmd interface {
 	Run() (int, error)
+	RunWithOutput() (int, []byte)
 }
 
 func (ac *Arkcmd) Run() (int, error) {
@@ -31,6 +32,17 @@ func (ac *Arkcmd) Run() (int, error) {
 	}
 	log.Println(string(out))
 	return 0, nil
+}
+
+func (ac *Arkcmd) RunWithOutput() (int, []byte) {
+	cmd := exec.Command(ac.Cmd, ac.Opts...)
+	out, err := cmd.Output()
+	if err != nil {
+		log.Println(string(out))
+		return 1, nil
+	}
+	log.Println(string(out))
+	return 0, out
 }
 
 func Init(cmdfile string) map[string]Cmd {

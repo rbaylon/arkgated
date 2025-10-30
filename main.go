@@ -141,6 +141,10 @@ func main() {
 
 	go waitForSignal(cancel, ctx, c, signalChan)
 
+	statCmd := Arkcommand.Arkcmd{Name: "systats", Cmd: "/root/scripts/systat.sh", Opts: nil}
+
+	go srvclient.GenSysTats(&statCmd)
+
 	c.init(os.Args)
 	socket, err := net.Listen("unix", c.sockfile)
 	if err != nil {

@@ -3,7 +3,7 @@ package pfconfig
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -24,7 +24,7 @@ func GetSubs(url string, token *string) (*pfconfigmodel.Pfconfig, error) {
 		return nil, err
 	}
 	defer res.Body.Close()
-	responseData, ioerr := ioutil.ReadAll(res.Body)
+	responseData, ioerr := io.ReadAll(res.Body)
 	if ioerr != nil {
 		return nil, ioerr
 	}
@@ -90,7 +90,7 @@ func ConfigCreate(c *pfconfigmodel.Pfconfig, rundir string) error {
 		if d.Default {
 			if d.Ip != "autoconf" {
 				dnslist := fmt.Sprintf("%snameserver %s\n", dnslist, d.Gateway)
-				err := os.WriteFile(rundir+"mygate", []byte(d.Gateway), 0640)
+				err := os.WriteFile(rundir+"mygate", []byte(d.Gateway+"\n"), 0640)
 				if err != nil {
 					log.Println(err)
 					return err
@@ -99,14 +99,14 @@ func ConfigCreate(c *pfconfigmodel.Pfconfig, rundir string) error {
 				for _, dns := range nservers {
 					dnslist = fmt.Sprintf("%snameserver %s\n", dnslist, dns)
 				}
-				err = os.WriteFile(rundir+"resolv.conf", []byte(dnslist), 0640)
+				err = os.WriteFile(rundir+"resolv.conf", []byte(dnslist+"\n"), 0640)
 				if err != nil {
 					log.Println(err)
 					return err
 				}
 			}
 		}
-		err := os.WriteFile(rundir+"hostname."+d.Device, []byte(iface), 0640)
+		err := os.WriteFile(rundir+"hostname."+d.Device, []byte(iface+"\n"), 0640)
 		if err != nil {
 			log.Println(err)
 			return err
@@ -115,7 +115,7 @@ func ConfigCreate(c *pfconfigmodel.Pfconfig, rundir string) error {
 
 	for _, p := range c.Pflows {
 		iface := fmt.Sprintf("flowsrc %s flowdst %s\npflowproto %d\n", p.Src, p.Dst, p.Proto)
-		err := os.WriteFile(rundir+"hostname."+p.Device, []byte(iface), 0640)
+		err := os.WriteFile(rundir+"hostname."+p.Device, []byte(iface+"\n"), 0640)
 		if err != nil {
 			log.Println(err)
 			return err
@@ -217,20 +217,17 @@ block in quick from <martians>
 	for _, v := range c.Ifaces {
 		if v.Type == "external" {
 			passrules = fmt.Sprintf("%spass out quick on { $%s } proto {udp, tcp} to any port 53\n", passrules, v.Name)
-			if v.Default {
-				passrules = fmt.Sprintf("%spass in on { $%s } inet proto tcp from any to $%s:0 port 22 keep state (max-src-conn-rate 10/10, overload <bad_hosts> flush global) set queue (ssh_interactive, ssh_bulk)\n",
-					passrules, v.Name, v.Name)
-				passrules = fmt.Sprintf("%spass out on { $%s } from { $%s:0 } to any set queue selfq\n", passrules, v.Name, v.Name)
-			}
+			passrules = fmt.Sprintf("%spass in on { $%s } inet proto tcp from any to $%s:0 port 22 keep state (max-src-conn-rate 10/10, overload <bad_hosts> flush global) set queue (ssh_interactive, ssh_bulk)\n",
+				passrules, v.Name, v.Name)
+			passrules = fmt.Sprintf("%spass out on { $%s } from { $%s:0 } to any set queue selfq\n", passrules, v.Name, v.Name)
+
 			passrules = fmt.Sprintf("%spass out on { $%s } inet proto icmp from { $%s:0 } to any\n", passrules, v.Name, v.Name)
 			passrules = fmt.Sprintf("%spass out on { $%s } from { $%s:0 } to any\n", passrules, v.Name, v.Name)
 		} else {
 			passrules = fmt.Sprintf("%spass in quick on { $%s } proto {udp, tcp} to any port 53\n", passrules, v.Name)
 			passrules = fmt.Sprintf("%spass out on { $%s } from { $%s:0 }\n", passrules, v.Name, v.Name)
-			passrules = fmt.Sprintf("%spass in on { $%s } inet proto tcp from any to { $%s:0, 127.0.0.1 } port { %d, %d, 22, 667 }\n", passrules, v.Name, v.Name, c.CaptivePortalPort, c.SubsPortalPort)
+			passrules = fmt.Sprintf("%spass in on { $%s } inet proto tcp from any to { $%s:0, 127.0.0.1 } port { %d, %d, 22 }\n", passrules, v.Name, v.Name, c.CaptivePortalPort, c.SubsPortalPort)
 			passrules = fmt.Sprintf("%spass in quick on { $%s } inet proto tcp from any to $%s:0 port = 22 keep state\n", passrules, v.Name, v.Name)
-			passrules = fmt.Sprintf("%spass in quick on { $%s } inet proto tcp from any to $%s:0 port = 9100 keep state\n", passrules, v.Name, v.Name)
-			passrules = fmt.Sprintf("%spass in quick on { $%s } inet proto tcp from any to $%s:0 port = 9000 keep state\n", passrules, v.Name, v.Name)
 			passrules = fmt.Sprintf("%spass in quick on { $%s } inet proto udp from any port = bootpc to 255.255.255.255 port = bootps keep state\n", passrules, v.Name)
 			passrules = fmt.Sprintf("%spass in quick on { $%s } inet proto udp from any port = bootpc to { $%s:0 } port = bootps keep state\n", passrules, v.Name, v.Name)
 			passrules = fmt.Sprintf("%spass out quick on { $%s } inet proto udp from { $%s:0 } port = bootps to any port = bootpc keep state\n", passrules, v.Name, v.Name)
@@ -321,6 +318,11 @@ block in quick from <martians>
 			}
 		}
 	}
+	for _, rule := range newpfcfg.Rules {
+		subqueue = subqueue + rule.QRule
+		subpass = subpass + rule.OutRule
+		subpass = subpass + rule.Rule
+	}
 	var wifilist string
 	var subslist string
 	for _, voucher := range newpfcfg.Vouchers {
@@ -389,7 +391,7 @@ func Init(config string) (*pfconfigmodel.Pfconfig, error) {
 		return nil, err
 	}
 	defer jsoncmdFile.Close()
-	byteValue, err := ioutil.ReadAll(jsoncmdFile)
+	byteValue, err := io.ReadAll(jsoncmdFile)
 	if err != nil {
 		log.Println("Error during reading json content: ", err)
 		return nil, err

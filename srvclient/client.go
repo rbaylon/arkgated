@@ -49,6 +49,7 @@ func Enroll(urlbase string, token *string, pf *pfconfigmodel.Pfconfig) error {
 		res, err := client.Do(req)
 		if err != nil {
 			log.Println(err)
+			res.Body.Close()
 			return err
 		}
 
@@ -59,7 +60,8 @@ func Enroll(urlbase string, token *string, pf *pfconfigmodel.Pfconfig) error {
 			}
 			log.Println(string(b))
 			log.Println("Failed to enroll router", err)
-			return fmt.Errorf("Failed to enroll router")
+			res.Body.Close()
+			return fmt.Errorf("failed to enroll router")
 		}
 		_, _ = io.Copy(io.Discard, res.Body)
 		res.Body.Close()

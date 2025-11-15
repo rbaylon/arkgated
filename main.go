@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/namsral/flag"
 	Arkcommand "github.com/rbaylon/arkgated/arkcommand"
@@ -55,6 +56,23 @@ func (c *config) init(args []string) error {
 	return nil
 }
 
+var startTime time.Time
+
+func refreshToken(c *config) *string {
+	limit := 1440 * time.Minute // 1day
+	uptime := time.Since(startTime) * time.Minute
+	if uptime > limit {
+		token, err := srvclient.GetToken(c.creds, c.srvcurl+"login")
+		if err != nil {
+			return nil
+		}
+		log.Println("Token refreshed")
+		startTime = time.Now()
+		return token
+	}
+	return nil
+}
+
 func run(c *config, out io.Writer, sock net.Listener) error {
 	log.SetOutput(out)
 	pfcfg, err := pfconfig.Init(c.rundir + "config.json")
@@ -68,8 +86,12 @@ func run(c *config, out io.Writer, sock net.Listener) error {
 	if err != nil {
 		log.Println("Error creating pf config file: ", err)
 	}
-
+	startTime = time.Now()
 	for {
+		newtoken := refreshToken(c)
+		if newtoken != nil {
+			apitoken = newtoken
+		}
 		log.Println("Blocking until we get connection")
 		conn, err := sock.Accept()
 		if err != nil {
@@ -117,13 +139,14 @@ func waitForSignal(cancel context.CancelFunc, ctx context.Context, c *config, si
 			case syscall.SIGINT, syscall.SIGTERM:
 				log.Printf("Got SIGINT/SIGTERM, exiting.")
 				os.Remove(c.sockfile)
-				os.Exit(2)
+				cancel()
 			case syscall.SIGHUP:
 				log.Println("SIGHUP received. Relaoding config.")
 				c.init(os.Args)
 			}
 		case <-ctx.Done():
 			log.Printf("Context Done.")
+			os.Exit(2)
 		}
 	}
 }
@@ -135,7 +158,7 @@ func main() {
 	ctx, cancel := context.WithCancel(ctx)
 
 	signalChan := make(chan os.Signal, 1)
-	signal.Notify(signalChan, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGKILL)
+	signal.Notify(signalChan, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 
 	c := &config{}
 

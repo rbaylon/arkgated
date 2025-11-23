@@ -99,11 +99,11 @@ func GetToken(creds string, api_login_url string) (*string, error) {
 	return &t.Jwt, nil
 }
 
-func GenSysTats(cmd *Arkcommand.Arkcmd) {
+func ExecScripts(cmd *Arkcommand.Arkcmd, outfile string) {
 	for {
 		ret, out := cmd.RunWithOutput()
 		if ret == 0 {
-			err := os.WriteFile("/tmp/mystats", out, 0644)
+			err := os.WriteFile(outfile, out, 0644)
 			if err != nil {
 				log.Println(err)
 			}

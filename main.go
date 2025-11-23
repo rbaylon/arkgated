@@ -165,8 +165,10 @@ func main() {
 	go waitForSignal(cancel, ctx, c, signalChan)
 
 	statCmd := Arkcommand.Arkcmd{Name: "systats", Cmd: "/root/scripts/systat.sh", Opts: nil}
+	usertrafficCmd := Arkcommand.Arkcmd{Name: "systats", Cmd: "/root/scripts/traffic2json.sh", Opts: nil}
 
-	go srvclient.GenSysTats(&statCmd)
+	go srvclient.ExecScripts(&statCmd, "/tmp/mystats")
+	go srvclient.ExecScripts(&usertrafficCmd, "/tmp/usertraffic")
 
 	c.init(os.Args)
 	socket, err := net.Listen("unix", c.sockfile)

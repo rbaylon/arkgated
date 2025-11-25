@@ -257,7 +257,7 @@ block in quick from <martians>
 	var subpass string
 	var gateway string
 	var pppcreds string
-	for _, i := range c.Ifaces {
+	for _, i := range newpfcfg.Ifaces {
 		for _, voucher := range newpfcfg.Vouchers {
 			if voucher.Status == "active" {
 				if i.Type == "external" {

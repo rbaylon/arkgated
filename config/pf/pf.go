@@ -125,7 +125,9 @@ func ConfigCreate(c *pfconfigmodel.Pfconfig, rundir string) error {
 	return nil
 }
 
-func PfCreate(c *pfconfigmodel.Pfconfig, rundir string, urlbase string, t *string) error {
+func PfCreate(rundir string, urlbase string, t *string) error {
+	newpfcfg, err := GetSubs(urlbase+"pfconfig/query/"+c.Router, t)
+	c := newpfcfg
 	var macros string
 	for _, v := range c.Ifaces {
 		macros = fmt.Sprintf("%s%s = \"%s\"\n", macros, v.Name, v.Device)
@@ -202,7 +204,6 @@ block in quick from <martians>
 	}
 	var gateways string
 	var lbrules string
-	newpfcfg, err := GetSubs(urlbase+"pfconfig/query/"+c.Router, t)
 	if err != nil {
 		log.Println(err)
 		return err

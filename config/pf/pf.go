@@ -125,8 +125,8 @@ func ConfigCreate(c *pfconfigmodel.Pfconfig, rundir string) error {
 	return nil
 }
 
-func PfCreate(rundir string, urlbase string, t *string) error {
-	newpfcfg, err := GetSubs(urlbase+"pfconfig/query/"+c.Router, t)
+func PfCreate(router string, rundir string, urlbase string, t *string) error {
+	newpfcfg, err := GetSubs(urlbase+"pfconfig/query/"+router, t)
 	c := newpfcfg
 	var macros string
 	for _, v := range c.Ifaces {

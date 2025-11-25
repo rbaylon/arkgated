@@ -256,6 +256,7 @@ block in quick from <martians>
 	var subqueue string
 	var subpass string
 	var gateway string
+	var pppcreds string
 	for _, i := range c.Ifaces {
 		for _, voucher := range newpfcfg.Vouchers {
 			if voucher.Status == "active" {
@@ -298,6 +299,11 @@ block in quick from <martians>
 						subpass, i.Name, ident, i.Name, i.Name, priority, ident)
 				} else {
 					if i.Name == sub.Type {
+						if sub.Pppusername != "" && sub.Ppppassword != "" {
+							pppcreds = fmt.Sprintf("%s%s:\\\n\t:password=%s:\\\n\t:framed-ip-address=%s:\n\n",
+								pppcreds, sub.Pppusername, sub.Ppppassword, sub.FramedIp)
+						}
+
 						if sub.Gateway != "" {
 							gateway = fmt.Sprintf("route-to %s", sub.Gateway)
 						} else {
@@ -360,6 +366,11 @@ block in quick from <martians>
 	}
 	configstring := macros + plantables + tables + queues + planqueue + subqueue + matches + defaultblock + defaultqrules + passrules + strules + subpass + lbrules
 	err = os.WriteFile(rundir+"pf.conf", []byte(configstring), 0600)
+	if err != nil {
+		log.Println(err)
+		return err
+	}
+	err = os.WriteFile(rundir+"npppd-users", []byte(pppcreds), 0600)
 	if err != nil {
 		log.Println(err)
 		return err

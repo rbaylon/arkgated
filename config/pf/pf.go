@@ -37,7 +37,7 @@ func GetSubs(url string, token *string) (*pfconfigmodel.Pfconfig, error) {
 
 func GetPpp(token *string, urlbase string, pfconfigid uint) (*pppoemodel.Pppoe, error) {
 	client := &http.Client{}
-	req, _ := http.NewRequest("GET", urlbase+"/pppoe/pfconfig/"+strconv.Itoa(int(pfconfigid)), nil)
+	req, _ := http.NewRequest("GET", urlbase+"pppoe/pfconfig/"+strconv.Itoa(int(pfconfigid)), nil)
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", *token))
 	res, err := client.Do(req)
 	if err != nil {

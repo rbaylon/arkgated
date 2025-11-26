@@ -152,7 +152,6 @@ func ConfigCreate(c *pfconfigmodel.Pfconfig, rundir string) error {
 func NppdCreate(token *string, urlbase string, rundir string, pfconfigid uint) error {
 	nppd, err := GetPpp(token, urlbase, pfconfigid)
 	if err != nil {
-		log.Println(err)
 		return err
 	}
 	npppdconf := heredoc.Docf(`
@@ -171,10 +170,9 @@ ipcp IPCP {
 }
 
 interface pppac0 address %s ipcp IPCP
-bind tunnel from PPPOE01 authenticated by LOCAL to pppac0
-		 }`, nppd.Device, nppd.PoolAddress, nppd.DnsAddress, nppd.Ip)
+bind tunnel from PPPOE01 authenticated by LOCAL to pppac0`, nppd.Device, nppd.PoolAddress, nppd.DnsAddress, nppd.Ip)
 
-	err = os.WriteFile(rundir+"npppd.conf", []byte(npppdconf+"\n"), 0640)
+	err = os.WriteFile(rundir+"npppd.conf", []byte(npppdconf+"\n"), 0644)
 	if err != nil {
 		log.Println(err)
 		return err

@@ -7,11 +7,13 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/MakeNowJust/heredoc"
 	pfconfigmodel "github.com/rbaylon/srvcman/modules/pfconfig/model"
 	planmodel "github.com/rbaylon/srvcman/modules/plans/model"
+	pppoemodel "github.com/rbaylon/srvcman/modules/pppoes/model"
 )
 
 func GetSubs(url string, token *string) (*pfconfigmodel.Pfconfig, error) {
@@ -31,6 +33,28 @@ func GetSubs(url string, token *string) (*pfconfigmodel.Pfconfig, error) {
 	var cfg pfconfigmodel.Pfconfig
 	json.Unmarshal(responseData, &cfg)
 	return &cfg, nil
+}
+
+func GetPpp(token *string, urlbase string, pfconfigid uint) (*pppoemodel.Pppoe, error) {
+	client := &http.Client{}
+	req, _ := http.NewRequest("GET", urlbase+"/pppoe/pfconfig/"+strconv.Itoa(int(pfconfigid)), nil)
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", *token))
+	res, err := client.Do(req)
+	if err != nil {
+		log.Println(err)
+		return nil, err
+	}
+	if res.StatusCode != 200 {
+		return nil, fmt.Errorf("npppd record not found for pfconfig id: %d", pfconfigid)
+	}
+	defer res.Body.Close()
+	responseData, ioerr := io.ReadAll(res.Body)
+	if ioerr != nil {
+		return nil, ioerr
+	}
+	ppp := pppoemodel.Pppoe{}
+	json.Unmarshal(responseData, &ppp)
+	return &ppp, nil
 }
 
 func DhcpCreate(c *pfconfigmodel.Pfconfig, rundir string) error {
@@ -120,6 +144,40 @@ func ConfigCreate(c *pfconfigmodel.Pfconfig, rundir string) error {
 			log.Println(err)
 			return err
 		}
+	}
+
+	return nil
+}
+
+func NppdCreate(token *string, urlbase string, rundir string, pfconfigid uint) error {
+	nppd, err := GetPpp(token, urlbase, pfconfigid)
+	if err != nil {
+		log.Println(err)
+		return err
+	}
+	npppdconf := heredoc.Docf(`
+authentication LOCAL type local {
+        users-file "/etc/npppd/npppd-users"
+        user-max-session 1
+}
+
+tunnel PPPOE01 protocol pppoe {
+        listen on interface %s
+}
+
+ipcp IPCP {
+        pool-address %s
+        dns-servers %s
+}
+
+interface pppac0 address %s ipcp IPCP
+bind tunnel from PPPOE01 authenticated by LOCAL to pppac0
+		 }`, nppd.Device, nppd.PoolAddress, nppd.DnsAddress, nppd.Ip)
+
+	err = os.WriteFile(rundir+"npppd.conf", []byte(npppdconf+"\n"), 0640)
+	if err != nil {
+		log.Println(err)
+		return err
 	}
 
 	return nil
@@ -392,6 +450,10 @@ block in quick from <martians>
 	if err != nil {
 		log.Println(err)
 		return err
+	}
+	err = NppdCreate(t, urlbase, rundir, newpfcfg.ID)
+	if err != nil {
+		log.Println(err)
 	}
 	return nil
 }

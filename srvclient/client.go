@@ -80,6 +80,8 @@ func GetToken(creds string, api_login_url string) (*string, error) {
 	log.Println("StatusCode", res.StatusCode)
 	if res.StatusCode != 200 {
 		log.Fatalln("API login failed")
+		res.Body.Close()
+		return nil, fmt.Errorf("api login failed.")
 	}
 	if err != nil {
 		_, _ = io.Copy(io.Discard, res.Body)
@@ -108,6 +110,6 @@ func ExecScripts(cmd *Arkcommand.Arkcmd, outfile string) {
 				log.Println(err)
 			}
 		}
-		time.Sleep(10 * time.Second)
+		time.Sleep(60 * time.Second)
 	}
 }

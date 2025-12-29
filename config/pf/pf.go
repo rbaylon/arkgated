@@ -23,6 +23,7 @@ func GetSubs(url string, token *string) (*pfconfigmodel.Pfconfig, error) {
 	res, err := client.Do(req)
 	if err != nil {
 		log.Println(err)
+		res.Body.Close()
 		return nil, err
 	}
 	defer res.Body.Close()
@@ -42,9 +43,11 @@ func GetPpp(token *string, urlbase string, pfconfigid uint) (*pppoemodel.Pppoe, 
 	res, err := client.Do(req)
 	if err != nil {
 		log.Println(err)
+		res.Body.Close()
 		return nil, err
 	}
 	if res.StatusCode != 200 {
+		res.Body.Close()
 		return nil, fmt.Errorf("npppd record not found for pfconfig id: %d", pfconfigid)
 	}
 	defer res.Body.Close()

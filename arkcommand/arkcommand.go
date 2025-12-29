@@ -35,6 +35,7 @@ func (ac *Arkcmd) Run() (int, error) {
 }
 
 func (ac *Arkcmd) RunWithOutput() (int, []byte) {
+	log.Println("running:", ac.Cmd)
 	cmd := exec.Command(ac.Cmd, ac.Opts...)
 	out, err := cmd.Output()
 	if err != nil {

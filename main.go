@@ -164,12 +164,6 @@ func main() {
 
 	go waitForSignal(cancel, ctx, c, signalChan)
 
-	statCmd := Arkcommand.Arkcmd{Name: "systats", Cmd: c.rundir + "scripts/systat.sh", Opts: nil}
-	usertrafficCmd := Arkcommand.Arkcmd{Name: "systats", Cmd: c.rundir + "scripts/traffic2json.sh", Opts: nil}
-
-	go srvclient.ExecScripts(&statCmd, "/tmp/mystats")
-	go srvclient.ExecScripts(&usertrafficCmd, "/tmp/usertraffic")
-
 	c.init(os.Args)
 	socket, err := net.Listen("unix", c.sockfile)
 	if err != nil {
@@ -183,6 +177,12 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	statCmd := Arkcommand.Arkcmd{Name: "systats", Cmd: c.rundir + "scripts/systat.sh", Opts: nil}
+	usertrafficCmd := Arkcommand.Arkcmd{Name: "systats", Cmd: c.rundir + "scripts/traffic2json.sh", Opts: nil}
+
+	go srvclient.ExecScripts(&statCmd, "/tmp/mystats")
+	go srvclient.ExecScripts(&usertrafficCmd, "/tmp/usertraffic")
 
 	log.Println("IPC running ")
 

@@ -14,6 +14,7 @@ import (
 	pfconfigmodel "github.com/rbaylon/srvcman/modules/pfconfig/model"
 	planmodel "github.com/rbaylon/srvcman/modules/plans/model"
 	pppoemodel "github.com/rbaylon/srvcman/modules/pppoes/model"
+	vlanmodel "github.com/rbaylon/srvcman/modules/vlans/model"
 )
 
 func GetSubs(url string, token *string) (*pfconfigmodel.Pfconfig, error) {
@@ -110,10 +111,27 @@ forward-zone:
 	return nil
 }
 
+type vlanmap struct {
+	Vmap map[string]vlanmodel.Vlan
+}
+
+func getVlans(vlans []vlanmodel.Vlan) vlanmap {
+	vm := vlanmap{}
+	for _, v := range vlans {
+		vm.Vmap[v.Name] = v
+	}
+	return vm
+}
 func ConfigCreate(c *pfconfigmodel.Pfconfig, rundir string) error {
 	dnslist := ""
+	vlans := getVlans(c.Vlans)
 	for _, d := range c.Ifaces {
 		iface := fmt.Sprintf("inet %s %s\n", d.Ip, d.Netmask)
+		if strings.Contains(d.Device, "vlan") {
+			vlan := vlans.Vmap[d.Device]
+			iface = fmt.Sprintf("%s patent %s rxprio %d txprio %d vnetid %d",
+				iface, vlan.ParentDevice, vlan.RxPrio, vlan.TxPrio, vlan.VlanTag)
+		}
 		if d.Default {
 			if d.Ip != "autoconf" {
 				dnslist := fmt.Sprintf("%snameserver %s\n", dnslist, d.Gateway)

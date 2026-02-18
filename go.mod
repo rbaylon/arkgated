@@ -5,7 +5,7 @@ go 1.24.0
 require (
 	github.com/MakeNowJust/heredoc v1.0.0
 	github.com/namsral/flag v1.7.4-pre
-	github.com/rbaylon/srvcman v1.1.25
+	github.com/rbaylon/srvcman v1.1.26
 )
 
 require (

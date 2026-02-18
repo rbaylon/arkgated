@@ -181,6 +181,7 @@ authentication LOCAL type local {
         users-file "/etc/npppd/npppd-users"
         user-max-session 1
 }
+		
 		`)
 
 	cfg := fmt.Sprintf("%s\n", npppdauth)
@@ -201,7 +202,7 @@ bind tunnel from PPPOE%d authenticated by LOCAL to pppac%d
 `,
 			d.DevIndex, d.Device, d.DevIndex, d.PoolAddress, d.DnsAddress, d.DevIndex, d.Ip,
 			d.DevIndex, d.DevIndex, d.DevIndex)
-		cfg = fmt.Sprintf("%s\n", npppd)
+		cfg = fmt.Sprintf("%s%s\n", cfg, npppd)
 	}
 	err = os.WriteFile("/etc/npppd/npppd.conf.tmp", []byte(cfg+"\n"), 0644)
 	if err != nil {

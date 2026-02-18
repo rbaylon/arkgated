@@ -176,25 +176,34 @@ func NppdCreate(token *string, urlbase string, rundir string, pfconfigid uint) e
 	if err != nil {
 		return err
 	}
-	npppdconf := heredoc.Docf(`
+	npppdauth := heredoc.Docf(`
 authentication LOCAL type local {
         users-file "/etc/npppd/npppd-users"
         user-max-session 1
 }
+		`)
 
-tunnel PPPOE01 protocol pppoe {
-        listen on interface %s
+	cfg := fmt.Sprintf("%s\n", npppdauth)
+	for _, d := range nppd {
+		npppd := heredoc.Docf(`
+tunnel PPPOE%d protocol pppoe {
+		listen on interface %s
 }
 
-ipcp IPCP {
-        pool-address %s
-        dns-servers %s
+ipcp IPCP%d {
+		pool-address %s
+		dns-servers %s
 }
 
-interface pppac0 address %s ipcp IPCP
-bind tunnel from PPPOE01 authenticated by LOCAL to pppac0`, nppd.Device, nppd.PoolAddress, nppd.DnsAddress, nppd.Ip)
+interface pppac%d address %s ipcp IPCP%d
+bind tunnel from PPPOE%d authenticated by LOCAL to pppac%d
 
-	err = os.WriteFile(rundir+"npppd.conf", []byte(npppdconf+"\n"), 0644)
+`,
+			d.DevIndex, d.Device, d.DevIndex, d.PoolAddress, d.DnsAddress, d.DevIndex, d.Ip,
+			d.DevIndex, d.DevIndex, d.DevIndex)
+		cfg = fmt.Sprintf("%s\n", npppd)
+	}
+	err = os.WriteFile("/etc/npppd/npppd.conf.tmp", []byte(cfg+"\n"), 0644)
 	if err != nil {
 		log.Println(err)
 		return err
@@ -449,7 +458,7 @@ block in quick from <martians>
 		log.Println(err)
 		return err
 	}
-	err = os.WriteFile(rundir+"npppd-users", []byte(pppcreds), 0600)
+	err = os.WriteFile("/etc/npppd/npppd-users-tmp", []byte(pppcreds), 0600)
 	if err != nil {
 		log.Println(err)
 		return err

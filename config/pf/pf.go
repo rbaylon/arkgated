@@ -37,7 +37,7 @@ func GetSubs(url string, token *string) (*pfconfigmodel.Pfconfig, error) {
 	return &cfg, nil
 }
 
-func GetPpp(token *string, urlbase string, pfconfigid uint) (*pppoemodel.Pppoe, error) {
+func GetPpp(token *string, urlbase string, pfconfigid uint) ([]pppoemodel.Pppoe, error) {
 	client := &http.Client{}
 	req, _ := http.NewRequest("GET", urlbase+"pppoe/pfconfig/"+strconv.Itoa(int(pfconfigid)), nil)
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", *token))
@@ -56,9 +56,9 @@ func GetPpp(token *string, urlbase string, pfconfigid uint) (*pppoemodel.Pppoe, 
 	if ioerr != nil {
 		return nil, ioerr
 	}
-	ppp := pppoemodel.Pppoe{}
+	ppp := []pppoemodel.Pppoe{}
 	json.Unmarshal(responseData, &ppp)
-	return &ppp, nil
+	return ppp, nil
 }
 
 func DhcpCreate(c *pfconfigmodel.Pfconfig, rundir string) error {
@@ -126,12 +126,13 @@ func ConfigCreate(c *pfconfigmodel.Pfconfig, rundir string) error {
 	dnslist := ""
 	vlans := getVlans(c.Vlans)
 	for _, d := range c.Ifaces {
-		iface := fmt.Sprintf("inet %s %s\n", d.Ip, d.Netmask)
+		vif := ""
 		if strings.Contains(d.Device, "vlan") {
 			vlan := vlans.Vmap[d.Device]
-			iface = fmt.Sprintf("%s patent %s rxprio %d txprio %d vnetid %d",
-				iface, vlan.ParentDevice, vlan.RxPrio, vlan.TxPrio, vlan.VlanTag)
+			vif = fmt.Sprintf(" patent %s rxprio %d txprio %d vnetid %d",
+				vlan.ParentDevice, vlan.RxPrio, vlan.TxPrio, vlan.VlanTag)
 		}
+		iface := fmt.Sprintf("inet %s %s%s\n", d.Ip, d.Netmask, vif)
 		if d.Default {
 			if d.Ip != "autoconf" {
 				dnslist := fmt.Sprintf("%snameserver %s\n", dnslist, d.Gateway)

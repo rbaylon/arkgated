@@ -117,6 +117,7 @@ type vlanmap struct {
 
 func getVlans(vlans []vlanmodel.Vlan) vlanmap {
 	vm := vlanmap{}
+	vm.Vmap = make(map[string]vlanmodel.Vlan)
 	for _, v := range vlans {
 		vm.Vmap[v.Name] = v
 	}
@@ -181,7 +182,7 @@ authentication LOCAL type local {
         users-file "/etc/npppd/npppd-users"
         user-max-session 1
 }
-		
+
 		`)
 
 	cfg := fmt.Sprintf("%s\n", npppdauth)

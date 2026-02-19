@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -16,6 +17,25 @@ import (
 	pppoemodel "github.com/rbaylon/srvcman/modules/pppoes/model"
 	vlanmodel "github.com/rbaylon/srvcman/modules/vlans/model"
 )
+
+// BroadcastAddr calculates the broadcast IP address for a given net.IPNet.
+func BroadcastAddr(n *net.IPNet) net.IP {
+	// The IP address and mask are slices of bytes.
+	ip := n.IP
+	mask := n.Mask
+
+	// Create a new IP slice for the broadcast address.
+	broadcast := make(net.IP, len(ip))
+
+	// Perform bitwise OR operation with the network IP and the inverted mask.
+	// This sets all the host bits (where the mask has 0s) to 1s.
+	for i := range ip {
+		// For IPv4, ^mask[i] does the bitwise NOT.
+		// For IPv6, the calculation is more complex and usually not done this way.
+		broadcast[i] = ip[i] | ^mask[i]
+	}
+	return broadcast
+}
 
 func GetSubs(url string, token *string) (*pfconfigmodel.Pfconfig, error) {
 	client := &http.Client{}
@@ -129,9 +149,15 @@ func ConfigCreate(c *pfconfigmodel.Pfconfig, rundir string) error {
 	for _, d := range c.Ifaces {
 		vif := ""
 		if strings.Contains(d.Device, "vlan") {
+			_, ipNet, err := net.ParseCIDR(d.Ip + " " + d.Netmask)
+			if err != nil {
+				fmt.Println("Error parsing CIDR:", err)
+				return err
+			}
+			broadcast := BroadcastAddr(ipNet)
 			vlan := vlans.Vmap[d.Device]
-			vif = fmt.Sprintf(" patent %s rxprio %d txprio %d vnetid %d",
-				vlan.ParentDevice, vlan.RxPrio, vlan.TxPrio, vlan.VlanTag)
+			vif = fmt.Sprintf(" %s parent %s rxprio %d txprio %d vnetid %d",
+				broadcast, vlan.ParentDevice, vlan.RxPrio, vlan.TxPrio, vlan.VlanTag)
 		}
 		iface := fmt.Sprintf("inet %s %s%s\n", d.Ip, d.Netmask, vif)
 		if d.Default {

@@ -25,6 +25,14 @@ echo "enabling arkgated to run on startup"
 echo "arkgated_flags=\"-config ${workdir}/rundir/daemon.config\"" >> /etc/rc.conf.local
 rcctl enable arkgated
 rcctl start arkgated
+cd /dev/
+./MAKEDEV pppac1
+./MAKEDEV pppac2
+./MAKEDEV pppac3
+./MAKEDEV pppac4
+./MAKEDEV pppac5
+./MAKEDEV pppac6
+./MAKEDEV pppac7
 echo "done"
 
 

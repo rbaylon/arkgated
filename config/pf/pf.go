@@ -18,17 +18,25 @@ import (
 	vlanmodel "github.com/rbaylon/srvcman/modules/vlans/model"
 )
 
-// BroadcastAddr calculates the broadcast IP address for a given net.IPNet.
+func MaskToCidr(maskString string) int {
+	ip := net.ParseIP(maskString)
+	if ip == nil {
+		log.Fatalf("Invalid IP address: %s", maskString)
+	}
+
+	ip4 := ip.To4()
+	if ip4 == nil {
+		log.Fatalf("IP address is not IPv4: %s", maskString)
+	}
+	mask := net.IPMask(ip4)
+	prefixSize, _ := mask.Size()
+	return prefixSize
+}
+
 func BroadcastAddr(n *net.IPNet) net.IP {
-	// The IP address and mask are slices of bytes.
 	ip := n.IP
 	mask := n.Mask
-
-	// Create a new IP slice for the broadcast address.
 	broadcast := make(net.IP, len(ip))
-
-	// Perform bitwise OR operation with the network IP and the inverted mask.
-	// This sets all the host bits (where the mask has 0s) to 1s.
 	for i := range ip {
 		// For IPv4, ^mask[i] does the bitwise NOT.
 		// For IPv6, the calculation is more complex and usually not done this way.
@@ -149,7 +157,8 @@ func ConfigCreate(c *pfconfigmodel.Pfconfig, rundir string) error {
 	for _, d := range c.Ifaces {
 		vif := ""
 		if strings.Contains(d.Device, "vlan") {
-			_, ipNet, err := net.ParseCIDR(d.Ip + " " + d.Netmask)
+			cidr := MaskToCidr(d.Netmask)
+			_, ipNet, err := net.ParseCIDR(fmt.Sprintf("%s/%d", d.Ip, cidr))
 			if err != nil {
 				fmt.Println("Error parsing CIDR:", err)
 				return err

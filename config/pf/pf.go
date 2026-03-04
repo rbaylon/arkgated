@@ -95,7 +95,7 @@ func DhcpCreate(c *pfconfigmodel.Pfconfig, rundir string) error {
 		net_block := heredoc.Docf(`
 subnet %s netmask %s {
   option routers %s;
-  option domain-name-servers %s, 8.8.8.8, 4.2.2.2;
+  option domain-name-servers %s, 1.1.1.1, 1.0.0.1;
   range %s;
 }
 `, d.Subnet, d.Netmask, d.Routers, d.Dnsservers, d.Range)
@@ -128,8 +128,8 @@ server:
 
 forward-zone:
         name: "."
-        forward-addr: 8.8.8.8  # IP of the preferred upstream resolver
         forward-addr: 1.1.1.1
+	forward-addr: 1.0.0.1
 	`, outifaces)
 	err := os.WriteFile(rundir+"unbound.conf", []byte(dnsblock), 0600)
 	if err != nil {
@@ -344,7 +344,7 @@ block in quick from <martians>
 
 	for _, v := range c.Ifaces {
 		if v.Type == "external" {
-			passrules = fmt.Sprintf("%spass out quick on { $%s } proto {udp, tcp} to any port { 853, 53 }\n", passrules, v.Name)
+			passrules = fmt.Sprintf("%spass out quick on { $%s } proto {udp, tcp} to any port 53 \n", passrules, v.Name)
 			passrules = fmt.Sprintf("%spass in on { $%s } inet proto tcp from any to $%s:0 port 22 keep state (max-src-conn-rate 10/10, overload <bad_hosts> flush global) set queue (ssh_interactive, ssh_bulk)\n",
 				passrules, v.Name, v.Name)
 			passrules = fmt.Sprintf("%spass out on { $%s } from { $%s:0 } to any set queue selfq\n", passrules, v.Name, v.Name)
@@ -352,7 +352,7 @@ block in quick from <martians>
 			passrules = fmt.Sprintf("%spass out on { $%s } inet proto icmp from { $%s:0 } to any\n", passrules, v.Name, v.Name)
 			passrules = fmt.Sprintf("%spass out on { $%s } from { $%s:0 } to any\n", passrules, v.Name, v.Name)
 		} else {
-			passrules = fmt.Sprintf("%spass in quick on { $%s } proto {udp, tcp} to any port { 853, 53 }\n", passrules, v.Name)
+			passrules = fmt.Sprintf("%spass in quick on { $%s } proto {udp, tcp} to any port 53 rdr-to $%s:0 port 53\n", passrules, v.Name)
 			passrules = fmt.Sprintf("%spass out on { $%s } from { $%s:0 }\n", passrules, v.Name, v.Name)
 			passrules = fmt.Sprintf("%spass in on { $%s } inet proto tcp from any to { $%s:0, 127.0.0.1 } port { %d, %d, 22 }\n", passrules, v.Name, v.Name, c.CaptivePortalPort, c.SubsPortalPort)
 			passrules = fmt.Sprintf("%spass in quick on { $%s } inet proto tcp from any to $%s:0 port = 22 keep state\n", passrules, v.Name, v.Name)

@@ -2,21 +2,25 @@
 
 cputemp=`systat -a -B sensors | awk '/cpu0\.temp0/ {print $2 }'`
 cpuusage=`systat -a -B cpu | awk '/^[0-3]/ {gsub(/%/,"",$7); m+=$7; count++} END {printf "%s", m/count}'`
-total=`pfctl -sr | grep lanlow | wc -l`
-globe=192.168.254.254
-pldt=192.168.69.1
-defgw=`cat /etc/mygate`
 
-gsub=`pfctl -sr | grep $globe | wc -l`
-psub=`pfctl -sr | grep $pldt | wc -l`
-defsub=`pfctl -sr | egrep "lan2low|lanlow" | grep -v route | wc -l`
-case $defgw in
-        "$globe")
-                gsub=$((defsub+gsub))
-                ;;
-        "$pldt")
-                psub=$((defsub+psub))
-                ;;
-esac
-gwsubs="{\"globe\":$gsub,\"pldt\":$psub}"
+gwstats(){
+    gwfile=$1
+
+    IFS=','
+    total=0
+    defcount=`pfctl -sr | grep -v "route-to" | egrep "lanlow|lan2low" | wc -l`
+    total=$defcount
+    echo -n "{"
+    while read g i
+    do
+       count=`pfctl -sr | grep "route-to $i" | wc -l`
+       echo -n "\"$g\":$count,"
+       total=$((total+count))
+    done < $gwfile
+    echo -n "\"defcount\":$defcount,"
+    echo -n "\"total\":$total"
+    echo "}"
+}
+rundir=$(dirname $0)
+gwsubs=`gwstats $rundir/gateways.conf`
 echo "{ \"cputemp\":$cputemp, \"cpuusage\":$cpuusage, \"gwsubs\":$gwsubs }"

@@ -110,16 +110,12 @@ subnet %s netmask %s {
 }
 
 func DnsCreate(c *pfconfigmodel.Pfconfig, rundir string) error {
-	outifaces := ""
-	for _, d := range c.Ifaces {
-		if d.Type == "external" {
-			outifaces = fmt.Sprintf("%s\toutgoing-interface: %s\n", outifaces, d.Gateway)
-		}
-	}
 	dnsblock := heredoc.Docf(`
 server:
-	interface: 0.0.0.0
-	%s
+    interface: 0.0.0.0
+    #outgoing-interface: 192.168.254.254
+    # Use system CA bundle for TLS verification
+    tls-cert-bundle: "/etc/ssl/cert.pem"
     access-control: 172.16.0.0/12 allow
     do-not-query-localhost: no
     hide-identity: yes
@@ -127,10 +123,19 @@ server:
     prefetch: yes
 
 forward-zone:
-        name: "."
-        forward-addr: 1.1.1.1
-	forward-addr: 1.0.0.1
-	`, outifaces)
+    name: "."
+    forward-tls-upstream: yes
+
+    # Primary upstreams (DNS over TLS)
+    forward-addr: 1.1.1.1@853
+    forward-addr: 1.0.0.1@853
+    forward-addr: 9.9.9.9@853
+    forward-addr: 149.112.112.112@853
+
+    # Fallback upstreams (plain DNS, port 53)
+    forward-addr: 8.8.8.8
+    forward-addr: 8.8.4.4
+	`)
 	err := os.WriteFile(rundir+"unbound.conf", []byte(dnsblock), 0600)
 	if err != nil {
 		log.Println(err)
@@ -344,7 +349,7 @@ block in quick from <martians>
 
 	for _, v := range c.Ifaces {
 		if v.Type == "external" {
-			passrules = fmt.Sprintf("%spass out quick on { $%s } proto {udp, tcp} to any port 53 \n", passrules, v.Name)
+			passrules = fmt.Sprintf("%spass out quick on { $%s } proto {udp, tcp} to any port { 853, 53 }\n", passrules, v.Name)
 			passrules = fmt.Sprintf("%spass in on { $%s } inet proto tcp from any to $%s:0 port 22 keep state (max-src-conn-rate 10/10, overload <bad_hosts> flush global) set queue (ssh_interactive, ssh_bulk)\n",
 				passrules, v.Name, v.Name)
 			passrules = fmt.Sprintf("%spass out on { $%s } from { $%s:0 } to any set queue selfq\n", passrules, v.Name, v.Name)
@@ -352,7 +357,7 @@ block in quick from <martians>
 			passrules = fmt.Sprintf("%spass out on { $%s } inet proto icmp from { $%s:0 } to any\n", passrules, v.Name, v.Name)
 			passrules = fmt.Sprintf("%spass out on { $%s } from { $%s:0 } to any\n", passrules, v.Name, v.Name)
 		} else {
-			passrules = fmt.Sprintf("%spass in quick on { $%s } proto {udp, tcp} to any port 53 rdr-to $%s:0 port 53\n", passrules, v.Name)
+			passrules = fmt.Sprintf("%spass in quick on { $%s } proto {udp, tcp} to any port 53 rdr-to $%s:0 port 53\n", passrules, v.Name, v.Name)
 			passrules = fmt.Sprintf("%spass out on { $%s } from { $%s:0 }\n", passrules, v.Name, v.Name)
 			passrules = fmt.Sprintf("%spass in on { $%s } inet proto tcp from any to { $%s:0, 127.0.0.1 } port { %d, %d, 22 }\n", passrules, v.Name, v.Name, c.CaptivePortalPort, c.SubsPortalPort)
 			passrules = fmt.Sprintf("%spass in quick on { $%s } inet proto tcp from any to $%s:0 port = 22 keep state\n", passrules, v.Name, v.Name)

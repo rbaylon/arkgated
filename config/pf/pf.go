@@ -270,6 +270,7 @@ table <DoT> const {
 }
 table <allowed> persist file "%s"
 table <subsexpr> persist file "%s"
+table <fastdotcom> persist file "%s"
 table <bad_hosts> persist
 table <martians> { 0.0.0.0/8 169.254.0.0/16  \ 
        192.0.0.0/24 192.0.2.0/24 224.0.0.0/3 \
@@ -283,7 +284,7 @@ set limit states 2000000
 set limit table-entries 400000
 set limit anchors 10240
 set limit src-nodes 2000000
-`, rundir+c.WifiIpList, rundir+c.SubsIpList)
+`, rundir+c.WifiIpList, rundir+c.SubsIpList, rundir+"fast.com.blocks")
 	var queues string
 	var defiface string
 	for _, v := range c.Ifaces {
@@ -310,7 +311,7 @@ queue  ssh_bulk parent apps bandwidth 5M max 5M
 				nats, v.Name, v.Name, v.Name)
 			if v.Default == false {
 				matches = fmt.Sprintf("%smatch out on { $%s } inet proto tcp from any to any port 853 rdr-to <DoT> round-robin sticky-address\n",
-                                matches, v.Name)
+					matches, v.Name)
 			}
 		} else {
 			if v.Name != "management" {
@@ -390,9 +391,11 @@ block in quick from <martians>
 			if i.Type == "external" {
 				planqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM\n", planqueue, v.Plan, i.Name, i.Name, v.SpeedTestUp, v.SpeedTestUp)
 				strules = fmt.Sprintf("%spass out quick on $%s set queue %s%s set prio 7 tagged \"%s\"\n", strules, i.Name, v.Plan, i.Name, v.Plan)
+				strules = fmt.Sprintf("%spass out quick on $%s set queue %s%s set prio 7 tagged \"%sfast\"\n", strules, i.Name, v.Plan, i.Name, v.Plan)
 			} else {
 				planqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM\n", planqueue, v.Plan, i.Name, i.Name, v.SpeedTestDown, v.SpeedTestDown)
 				strules = fmt.Sprintf("%spass in quick on $%s inet proto { tcp, udp } from <%s> to any port { 5060, 8080 } set queue %s%s set prio 7 tag \"%s\"\n", strules, i.Name, v.Plan, v.Plan, i.Name, v.Plan)
+				strules = fmt.Sprintf("%spass in quick on $%s inet proto tcp from <%s> to <fastdotcom> port 443 set queue %s%s set prio 7 tag \"%sfast\"\n", strules, i.Name, v.Plan, v.Plan, i.Name, v.Plan)
 			}
 		}
 	}

@@ -1,6 +1,7 @@
 #!/bin/sh
 
 cputemp=`systat -a -B sensors | awk '/cpu0\.temp0/ {print $2 }'`
+systat -a -B sensors | grep "cpu0.temp0" >/dev/null
 if [[ $? -ne 0 ]];then
     cputemp=`systat -a -B sensors | awk '/ksmn0\.temp0/ {print $2 }'`
 fi

@@ -1,6 +1,9 @@
 #!/bin/sh
 
 cputemp=`systat -a -B sensors | awk '/cpu0\.temp0/ {print $2 }'`
+if [[ $? -ne 0 ]];then
+    cputemp=`systat -a -B sensors | awk '/ksmn0\.temp0/ {print $2 }'`
+fi
 cpuusage=`systat -a -B cpu | awk '/^[0-3]/ {gsub(/%/,"",$7); m+=$7; count++} END {printf "%s", m/count}'`
 
 gwstats(){

@@ -2,7 +2,7 @@ package Arkcommand
 
 import (
 	"encoding/json"
-	"io/ioutil"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -54,7 +54,7 @@ func Init(cmdfile string) map[string]Cmd {
 		log.Println("Error during json open file: ", err)
 	}
 	defer jsoncmdFile.Close()
-	byteValue, err := ioutil.ReadAll(jsoncmdFile)
+	byteValue, err := io.ReadAll(jsoncmdFile)
 	if err != nil {
 		log.Println("Error during reading json content: ", err)
 	}

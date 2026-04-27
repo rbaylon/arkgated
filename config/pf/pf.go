@@ -262,12 +262,6 @@ func PfCreate(router string, rundir string, urlbase string, t *string) error {
 		macros = fmt.Sprintf("%s%s = \"%s\"\n", macros, v.Name, v.Device)
 	}
 	tables := heredoc.Docf(`
-table <DoT> const {
-149.112.112.112
-1.1.1.1
-1.0.0.1
-9.9.9.9
-}
 table <allowed> persist file "%s"
 table <subsexpr> persist file "%s"
 table <fastdotcom> persist file "%s"
@@ -309,10 +303,6 @@ queue  ssh_bulk parent apps bandwidth 5M max 5M
 		if v.Type == "external" {
 			nats = fmt.Sprintf("%smatch out on { $%s } inet from !($%s:network) to any nat-to ($%s:0)\n",
 				nats, v.Name, v.Name, v.Name)
-			if v.Default == false {
-				matches = fmt.Sprintf("%smatch out on { $%s } inet proto tcp from any to any port 853 rdr-to <DoT> round-robin sticky-address\n",
-					matches, v.Name)
-			}
 		} else {
 			if v.Name != "management" {
 				nats = fmt.Sprintf("%smatch in on { $%s } proto tcp from <subsexpr> to any port { 80, 443 } rdr-to 127.0.0.1 port %d\n",

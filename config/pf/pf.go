@@ -290,8 +290,7 @@ set limit src-nodes 2000000
 			defiface = v.Name
 		}
 	}
-	queues = queues + heredoc.Docf(`
-queue selfq parent %s bandwidth 10M min 5M max 10M burst 15M for 100ms 
+	queues = queues + heredoc.Docf(` 
 queue apps parent %s bandwidth 10M 
 queue  ssh_interactive parent apps bandwidth 5M min 2M 
 queue  ssh_bulk parent apps bandwidth 5M max 5M
@@ -320,6 +319,7 @@ queue  ssh_bulk parent apps bandwidth 5M max 5M
 block all
 block in quick from <bad_hosts>
 block in quick from <martians>
+pass out quick from self
 `)
 	var defaultqrules string
 	for _, v := range c.Ifaces {
@@ -353,13 +353,8 @@ block in quick from <martians>
 			passrules = fmt.Sprintf("%spass out quick on { $%s } proto {udp, tcp} to any port { 853, 53 }\n", passrules, v.Name)
 			passrules = fmt.Sprintf("%spass in on { $%s } inet proto tcp from any to $%s:0 port 22 keep state (max-src-conn-rate 10/10, overload <bad_hosts> flush global) set queue (ssh_interactive, ssh_bulk)\n",
 				passrules, v.Name, v.Name)
-			passrules = fmt.Sprintf("%spass out on { $%s } from { $%s:0 } to any set queue selfq\n", passrules, v.Name, v.Name)
-
-			passrules = fmt.Sprintf("%spass out on { $%s } inet proto icmp from { $%s:0 } to any\n", passrules, v.Name, v.Name)
-			passrules = fmt.Sprintf("%spass out on { $%s } from { $%s:0 } to any\n", passrules, v.Name, v.Name)
 		} else {
 			passrules = fmt.Sprintf("%spass in quick on { $%s } proto {udp, tcp} to any port 53 rdr-to $%s:0 port 53\n", passrules, v.Name, v.Name)
-			passrules = fmt.Sprintf("%spass out on { $%s } from { $%s:0 }\n", passrules, v.Name, v.Name)
 			passrules = fmt.Sprintf("%spass in on { $%s } inet proto tcp from any to { $%s:0, 127.0.0.1 } port { %d, %d, 22 }\n", passrules, v.Name, v.Name, c.CaptivePortalPort, c.SubsPortalPort)
 			passrules = fmt.Sprintf("%spass in quick on { $%s } inet proto tcp from any to $%s:0 port = 22 keep state\n", passrules, v.Name, v.Name)
 			passrules = fmt.Sprintf("%spass in quick on { $%s } inet proto udp from any port = bootpc to 255.255.255.255 port = bootps keep state\n", passrules, v.Name)

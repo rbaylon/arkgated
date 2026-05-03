@@ -295,7 +295,7 @@ queue apps parent %s bandwidth 10M
 queue  ssh_interactive parent apps bandwidth 5M min 2M 
 queue  ssh_bulk parent apps bandwidth 5M max 5M
 # insert new queueus after this line 
-`, defiface, defiface)
+`, defiface)
 	matches := "match in all scrub (no-df random-id max-mss 1440)\n"
 	var nats string
 	for _, v := range c.Ifaces {

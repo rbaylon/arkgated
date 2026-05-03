@@ -394,7 +394,7 @@ pass out quick from self
 				if i.Type == "external" {
 					subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM\n",
 						subqueue, voucher.Value, i.Name, i.Name, voucher.Upspeed, voucher.Upspeed)
-					subpass = fmt.Sprintf("%spass out on $%s set queue %s%s tagged \"%s\"\n",
+					subpass = fmt.Sprintf("%spass out quick on $%s set queue %s%s tagged \"%s\"\n",
 						subpass, i.Name, voucher.Value, i.Name, voucher.Value)
 				} else {
 					if voucher.Gateway != "" {
@@ -404,7 +404,7 @@ pass out quick from self
 					}
 					subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM burst %dM for %dms\n",
 						subqueue, voucher.Value, i.Name, i.Name, voucher.Downspeed, voucher.Downspeed, voucher.Burstspeed, voucher.Duration)
-					subpass = fmt.Sprintf("%spass in on $%s from %s %s set queue %s%s tag \"%s\"\n",
+					subpass = fmt.Sprintf("%spass in quick on $%s from %s %s set queue %s%s tag \"%s\"\n",
 						subpass, i.Name, voucher.Ip, gateway, voucher.Value, i.Name, voucher.Value)
 				}
 			}
@@ -426,7 +426,7 @@ pass out quick from self
 					//subpass = fmt.Sprintf("%spass out quick on $%s set queue (%s%stest, %slow) set prio 7 tagged \"%stest\"\n",
 					//subpass, i.Name, ident, i.Name, i.Name, ident)
 
-					subpass = fmt.Sprintf("%spass out on $%s set queue (%s%s, %slow) %s tagged \"%s\"\n",
+					subpass = fmt.Sprintf("%spass out quick on $%s set queue (%s%s, %slow) %s tagged \"%s\"\n",
 						subpass, i.Name, ident, i.Name, i.Name, priority, ident)
 				} else {
 					if i.Name == sub.Type {
@@ -448,17 +448,18 @@ pass out quick from self
 						//subpass = fmt.Sprintf("%spass in quick on $%s inet proto { tcp, udp } from %s to any port { 5060, 8080 } %s set queue (%s%stest, %slow) set prio 7 tag \"%stest\"\n",
 						//subpass, i.Name, sub.FramedIp, gateway, ident, i.Name, i.Name, ident)
 
-						subpass = fmt.Sprintf("%spass in on $%s from %s %s set queue (%s%s, %slow) %s tag \"%s\"\n",
+						subpass = fmt.Sprintf("%spass in quick on $%s from %s %s set queue (%s%s, %slow) %s tag \"%s\"\n",
 							subpass, i.Name, sub.FramedIp, gateway, ident, i.Name, i.Name, priority, ident)
 					}
 				}
 			}
 		}
 	}
+	fwrules := ""
 	for _, rule := range newpfcfg.Rules {
 		subqueue = subqueue + rule.QRule
-		subpass = subpass + rule.OutRule
-		subpass = subpass + rule.Rule
+		fwrules = fwrules + rule.OutRule
+		fwrules = fwrules + rule.Rule
 	}
 	var wifilist string
 	var subslist string
@@ -495,7 +496,7 @@ pass out quick from self
 		log.Println(err)
 		return err
 	}
-	configstring := macros + plantables + tables + queues + planqueue + subqueue + matches + defaultblock + defaultqrules + passrules + strules + subpass + lbrules
+	configstring := macros + plantables + tables + queues + planqueue + subqueue + matches + defaultblock + defaultqrules + passrules + strules + fwrules + subpass + lbrules
 	err = os.WriteFile(rundir+"pf.conf", []byte(configstring), 0600)
 	if err != nil {
 		log.Println(err)

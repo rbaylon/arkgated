@@ -319,13 +319,13 @@ queue  ssh_bulk parent apps bandwidth 5M max 5M
 block all
 block in quick from <bad_hosts>
 block in quick from <martians>
-pass out from self
 `)
 	var defaultqrules string
 	for _, v := range c.Ifaces {
 		defaultqrules = fmt.Sprintf("%sblock return out on { $%s } inet all set queue %sdef\n",
 			defaultqrules, v.Name, v.Name)
 	}
+	defaultqrules = fmt.Sprintf("%spass out from self", defaultqrules)
 	var passrules string
 	var gws []string
 	//var extifs []string
@@ -399,7 +399,7 @@ pass out from self
 				if i.Type == "external" {
 					subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM\n",
 						subqueue, voucher.Value, i.Name, i.Name, voucher.Upspeed, voucher.Upspeed)
-					subpass = fmt.Sprintf("%spass out quick on $%s set queue %s%s tagged \"%s\"\n",
+					subpass = fmt.Sprintf("%spass out quick on $%s set queue %s%s tagged \"subid%s\"\n",
 						subpass, i.Name, voucher.Value, i.Name, voucher.Value)
 				} else {
 					if voucher.Gateway != "" {
@@ -409,7 +409,7 @@ pass out from self
 					}
 					subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM burst %dM for %dms\n",
 						subqueue, voucher.Value, i.Name, i.Name, voucher.Downspeed, voucher.Downspeed, voucher.Burstspeed, voucher.Duration)
-					subpass = fmt.Sprintf("%spass in quick on $%s from %s %s set queue %s%s tag \"%s\"\n",
+					subpass = fmt.Sprintf("%spass in quick on $%s from %s %s set queue %s%s tag \"subid%s\"\n",
 						subpass, i.Name, voucher.Ip, gateway, voucher.Value, i.Name, voucher.Value)
 				}
 			}

@@ -319,7 +319,7 @@ queue  ssh_bulk parent apps bandwidth 5M max 5M
 block all
 block in quick from <bad_hosts>
 block in quick from <martians>
-pass out quick from self
+pass out from self
 `)
 	var defaultqrules string
 	for _, v := range c.Ifaces {
@@ -350,12 +350,11 @@ pass out quick from self
 
 	for _, v := range c.Ifaces {
 		if v.Type == "external" {
+			passrules = fmt.Sprintf("%spass out quick on { $%s } proto {udp, tcp} to any port { 853, 53 }\n", passrules, v.Name)
 			if v.Default {
-				passrules = fmt.Sprintf("%spass out quick on { $%s } proto {udp, tcp} to any port { 853, 53 }\n", passrules, v.Name)
 				passrules = fmt.Sprintf("%spass in on { $%s } inet proto tcp from any to $%s:0 port 22 keep state (max-src-conn-rate 10/10, overload <bad_hosts> flush global) set queue (ssh_interactive, ssh_bulk)\n",
 					passrules, v.Name, v.Name)
 			} else {
-				passrules = fmt.Sprintf("%spass out quick on { $%s } proto {udp, tcp} to any port { 853, 53 } reply-to %s\n", passrules, v.Name, v.Gateway)
 				passrules = fmt.Sprintf("%spass in on { $%s } inet proto tcp from any to $%s:0 port 22 keep state (max-src-conn-rate 10/10, overload <bad_hosts> flush global) set queue (ssh_interactive, ssh_bulk) reply-to %s\n",
 					passrules, v.Name, v.Name, v.Gateway)
 			}
@@ -400,13 +399,8 @@ pass out quick from self
 				if i.Type == "external" {
 					subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM\n",
 						subqueue, voucher.Value, i.Name, i.Name, voucher.Upspeed, voucher.Upspeed)
-					if i.Default {
-						subpass = fmt.Sprintf("%spass out quick on $%s set queue %s%s tagged \"subid%s\"\n",
-							subpass, i.Name, voucher.Value, i.Name, voucher.Value)
-					} else {
-						subpass = fmt.Sprintf("%spass out quick on $%s set queue %s%s reply-to %s tagged \"subid%s\"\n",
-							subpass, i.Name, voucher.Value, i.Name, i.Gateway, voucher.Value)
-					}
+					subpass = fmt.Sprintf("%spass out quick on $%s set queue %s%s tagged \"%s\"\n",
+						subpass, i.Name, voucher.Value, i.Name, voucher.Value)
 				} else {
 					if voucher.Gateway != "" {
 						gateway = fmt.Sprintf("route-to %s", voucher.Gateway)
@@ -415,7 +409,7 @@ pass out quick from self
 					}
 					subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM burst %dM for %dms\n",
 						subqueue, voucher.Value, i.Name, i.Name, voucher.Downspeed, voucher.Downspeed, voucher.Burstspeed, voucher.Duration)
-					subpass = fmt.Sprintf("%spass in quick on $%s from %s %s set queue %s%s tag \"subid%s\"\n",
+					subpass = fmt.Sprintf("%spass in quick on $%s from %s %s set queue %s%s tag \"%s\"\n",
 						subpass, i.Name, voucher.Ip, gateway, voucher.Value, i.Name, voucher.Value)
 				}
 			}
@@ -436,13 +430,9 @@ pass out quick from self
 
 					//subpass = fmt.Sprintf("%spass out quick on $%s set queue (%s%stest, %slow) set prio 7 tagged \"%stest\"\n",
 					//subpass, i.Name, ident, i.Name, i.Name, ident)
-					if i.Default {
-						subpass = fmt.Sprintf("%spass out quick on $%s set queue (%s%s, %slow) %s tagged \"%s\"\n",
-							subpass, i.Name, ident, i.Name, i.Name, priority, ident)
-					} else {
-						subpass = fmt.Sprintf("%spass out quick on $%s set queue (%s%s, %slow) %s reply-to %s tagged \"%s\"\n",
-							subpass, i.Name, ident, i.Name, i.Name, priority, i.Gateway, ident)
-					}
+
+					subpass = fmt.Sprintf("%spass out quick on $%s set queue (%s%s, %slow) %s tagged \"%s\"\n",
+						subpass, i.Name, ident, i.Name, i.Name, priority, ident)
 				} else {
 					if i.Name == sub.Type {
 						if sub.Pppusername != "" && sub.Ppppassword != "" {

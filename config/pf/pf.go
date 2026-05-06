@@ -382,11 +382,11 @@ pass out quick from self
 			if i.Type == "external" {
 				planqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM\n", planqueue, v.Plan, i.Name, i.Name, v.SpeedTestUp, v.SpeedTestUp)
 				if i.Default {
-					strules = fmt.Sprintf("%spass out quick on $%s set queue %s%s set prio 7 tagged \"%s\"\n", strules, i.Name, v.Plan, i.Name, v.Plan)
-					strules = fmt.Sprintf("%spass out quick on $%s set queue %s%s set prio 7 tagged \"%sfast\"\n", strules, i.Name, v.Plan, i.Name, v.Plan)
+					strules = fmt.Sprintf("%smatch out on $%s set queue %s%s set prio 7 tagged \"%s\"\n", strules, i.Name, v.Plan, i.Name, v.Plan)
+					strules = fmt.Sprintf("%smatch out on $%s set queue %s%s set prio 7 tagged \"%sfast\"\n", strules, i.Name, v.Plan, i.Name, v.Plan)
 				} else {
-					strules = fmt.Sprintf("%spass out quick on $%s set queue %s%s set prio 7 reply-to %s tagged \"%s\"\n", strules, i.Name, v.Plan, i.Name, i.Gateway, v.Plan)
-					strules = fmt.Sprintf("%spass out quick on $%s set queue %s%s set prio 7 reply-to %s tagged \"%sfast\"\n", strules, i.Name, v.Plan, i.Name, i.Gateway, v.Plan)
+					strules = fmt.Sprintf("%smatch out on $%s set queue %s%s set prio 7 reply-to %s tagged \"%s\"\n", strules, i.Name, v.Plan, i.Name, i.Gateway, v.Plan)
+					strules = fmt.Sprintf("%smatch out on $%s set queue %s%s set prio 7 reply-to %s tagged \"%sfast\"\n", strules, i.Name, v.Plan, i.Name, i.Gateway, v.Plan)
 				}
 			} else {
 				planqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM\n", planqueue, v.Plan, i.Name, i.Name, v.SpeedTestDown, v.SpeedTestDown)

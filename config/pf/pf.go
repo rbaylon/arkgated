@@ -325,7 +325,7 @@ block in quick from <martians>
 		defaultqrules = fmt.Sprintf("%sblock return out on { $%s } inet all set queue %sdef\n",
 			defaultqrules, v.Name, v.Name)
 	}
-	defaultqrules = fmt.Sprintf("%spass out from self", defaultqrules)
+	defaultqrules = fmt.Sprintf("%spass out from self\n", defaultqrules)
 	var passrules string
 	var gws []string
 	//var extifs []string

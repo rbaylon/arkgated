@@ -381,8 +381,8 @@ pass out quick from self
 		for _, i := range c.Ifaces {
 			if i.Type == "external" {
 				planqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM\n", planqueue, v.Plan, i.Name, i.Name, v.SpeedTestUp, v.SpeedTestUp)
-				strules = fmt.Sprintf("%smatch out on $%s set queue %s%s set prio 7 tagged \"%s\"\n", strules, i.Name, v.Plan, i.Name, v.Plan)
-				strules = fmt.Sprintf("%smatch out on $%s set queue %s%s set prio 7 tagged \"%sfast\"\n", strules, i.Name, v.Plan, i.Name, v.Plan)
+				strules = fmt.Sprintf("%spass out on $%s set queue %s%s set prio 7 tagged \"%s\"\n", strules, i.Name, v.Plan, i.Name, v.Plan)
+				strules = fmt.Sprintf("%spass out on $%s set queue %s%s set prio 7 tagged \"%sfast\"\n", strules, i.Name, v.Plan, i.Name, v.Plan)
 			} else {
 				planqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM\n", planqueue, v.Plan, i.Name, i.Name, v.SpeedTestDown, v.SpeedTestDown)
 				strules = fmt.Sprintf("%spass in quick on $%s inet proto { tcp, udp } from <%s> to any port { 5060, 8080 } set queue %s%s set prio 7 tag \"%s\"\n", strules, i.Name, v.Plan, v.Plan, i.Name, v.Plan)

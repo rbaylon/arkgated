@@ -1,0 +1,17 @@
+{
+  "gateways": {
+    "192.168.77.1": "cctn2",
+    "192.168.1.1": "pldt",
+    "192.168.99.1": "Converge",
+    "192.168.254.254": "globe",
+    "192.168.88.1": "cctn1"
+  },
+  "ifaces": {
+    "globe": "em2",
+    "Converge": "em0",
+    "pldt": "em3",
+    "lan": "em1",
+    "cctn1": "axen0",
+    "cctn2": "ure0"
+  }
+}

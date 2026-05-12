@@ -101,7 +101,7 @@ func GetToken(creds string, api_login_url string) (*string, error) {
 	return &t.Jwt, nil
 }
 
-func ExecScripts(cmd *Arkcommand.Arkcmd, outfile string) {
+func ExecScripts(cmd *Arkcommand.Arkcmd, outfile string, wt time.Duration) {
 	for {
 		ret, out := cmd.RunWithOutput()
 		if ret == 0 {
@@ -110,6 +110,6 @@ func ExecScripts(cmd *Arkcommand.Arkcmd, outfile string) {
 				log.Println(err)
 			}
 		}
-		time.Sleep(60 * time.Second)
+		time.Sleep(wt * time.Second)
 	}
 }

@@ -2,10 +2,12 @@
 use strict;
 use warnings;
 use JSON;
+use File::Basename;
 
 my $initcommand = 'pfctl -sr -v';  # Change this to any safe shell command
 
-my $gwfile = "gateways.json";
+my $dirname = dirname(__FILE__);
+my $gwfile = "$dirname/system.json";
 my $json_text = do {
     open(my $fh, "<:encoding(UTF-8)", $gwfile)
         or die "Could not open $gwfile: $!";

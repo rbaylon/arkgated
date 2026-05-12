@@ -68,6 +68,8 @@ sub setBytes {
     my $out = 0;
     my $in = 0;
     my $gw = $data->{"ids"}->{$subid}->{"gateway"};
+    my $inbytes = 0;
+    my $outbytes = 0;
     while (my $line = <$fh>) {
         chomp($line);  # Remove trailing newline
         @record = split /\s+/, $line;
@@ -81,10 +83,11 @@ sub setBytes {
         }
         if ($out == 1){
             if($dl == 1){
-                $data->{"ids"}->{$subid}->{"out"} = ($record[5] - $data->{"ids"}->{$subid}->{"out"})*8;
+                $outbytes = ($record[5] - $record[10]) - $data->{"ids"}->{$subid}->{"out"};
+                $data->{"ids"}->{$subid}->{"out"} = ($outbytes)*8;
             } else {
                 $data->{"ids"}->{$subid}->{"dropout"} = 0+$record[10];
-                $data->{"ids"}->{$subid}->{"out"} = 0+$record[5];
+                $data->{"ids"}->{$subid}->{"out"} = $record[5] - $record[10];
             }
             $out = 0;
             $in = 0;
@@ -92,9 +95,10 @@ sub setBytes {
         }
         if ($in == 1){
             if($dl == 1){
-                $data->{"ids"}->{$subid}->{"in"} = ($record[5] - $data->{"ids"}->{$subid}->{"in"})*8;
+                $inbytes = ($record[5] - $record[10]) - $data->{"ids"}->{$subid}->{"in"};
+                $data->{"ids"}->{$subid}->{"in"} = ($inbytes)*8;
             } else {
-                $data->{"ids"}->{$subid}->{"in"} = 0+$record[5];
+                $data->{"ids"}->{$subid}->{"in"} = $record[5] - $record[10];
             }
             $in = 0;
             $in = 0;

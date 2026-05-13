@@ -95,11 +95,11 @@ sub setBytes {
     while (my $line = <$fh>) {
         chomp($line);  # Remove trailing newline
         @record = split /\s+/, $line;
-        if ($line =~ /$subid/ && $line =~ /\s+lan/){
+        if ($line =~ /$subid+lan/){
             $out = 1;
             next;
         }
-        if ($line =~ /$subid/ && $line =~ /\s+$gw\s+/){
+        if ($line =~ /$subid$gw/){
             $in = 1;
             next;
         }

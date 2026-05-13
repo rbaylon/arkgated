@@ -399,7 +399,7 @@ block in quick from <martians>
 				if i.Type == "external" {
 					subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM\n",
 						subqueue, voucher.Value, i.Name, i.Name, voucher.Upspeed, voucher.Upspeed)
-					subpass = fmt.Sprintf("%spass out quick on $%s set queue %s%s tagged \"subid%s\"\n",
+					subpass = fmt.Sprintf("%spass out quick on $%s set queue %s%s tagged \"%s\"\n",
 						subpass, i.Name, voucher.Value, i.Name, voucher.Value)
 				} else {
 					if voucher.Gateway != "" {
@@ -409,7 +409,7 @@ block in quick from <martians>
 					}
 					subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM burst %dM for %dms\n",
 						subqueue, voucher.Value, i.Name, i.Name, voucher.Downspeed, voucher.Downspeed, voucher.Burstspeed, voucher.Duration)
-					subpass = fmt.Sprintf("%spass in quick on $%s from %s %s set queue %s%s tag \"subid%s\"\n",
+					subpass = fmt.Sprintf("%spass in quick on $%s from %s %s set queue %s%s tag \"%s\"\n",
 						subpass, i.Name, voucher.Ip, gateway, voucher.Value, i.Name, voucher.Value)
 				}
 			}

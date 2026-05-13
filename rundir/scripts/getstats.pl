@@ -82,8 +82,9 @@ sub setBytes {
             next;
         }
         if ($out == 1){
-            if($dl == 1){
+            if($dl > 0){
                 $outbytes = ($record[5] - $record[10]) - $data->{"ids"}->{$subid}->{"out"};
+                $outbytes = $outbytes/$dl;
                 $data->{"ids"}->{$subid}->{"out"} = ($outbytes)*8;
             } else {
                 $data->{"ids"}->{$subid}->{"dropout"} = 0+$record[10];
@@ -94,8 +95,9 @@ sub setBytes {
             next;
         }
         if ($in == 1){
-            if($dl == 1){
+            if($dl > 0){
                 $inbytes = ($record[5] - $record[10]) - $data->{"ids"}->{$subid}->{"in"};
+                $inbytes = $inbytes/$dl;
                 $data->{"ids"}->{$subid}->{"in"} = ($inbytes)*8;
             } else {
                 $data->{"ids"}->{$subid}->{"in"} = $record[5] - $record[10];
@@ -108,12 +110,14 @@ sub setBytes {
     close($fh) or warn "Error closing pipe: $!";
 }
 
+my $time_start = time();
 foreach my $key (keys %{$data->{"ids"}}) {
     setBytes($key, 0);
 }
 sleep(1);
+my $time_end = time();
 foreach my $key (keys %{$data->{"ids"}}) {
-    setBytes($key, 1);
+    setBytes($key, $time_end - $time_start);
 }
 my $json_datatext = encode_json($data);
 print $json_datatext;

@@ -72,7 +72,7 @@ sub setCpuStats {
     open(my $fh, '-|', $cmd) or die "Failed to execute '$cmd': $!";
     while (my $line = <$fh>) {
         chomp($line);  # Remove trailing newline
-        @record = split /\=/, $line;
+        @record = split /\s+/, $line;
         $data->{"cpu"}->{"idle"} = $record[-1];
     }
     close($fh) or warn "Error closing pipe: $!";

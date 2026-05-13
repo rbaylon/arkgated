@@ -57,7 +57,29 @@ sub initData {
     close($fh)
         or warn "Error closing pipe: $!";
 }
+
+sub setCpuStats {
+    my $cmd = "sysctl | grep degC | head -1";
+    open(my $fh, '-|', $cmd) or die "Failed to execute '$cmd': $!";
+    while (my $line = <$fh>) {
+        chomp($line);  # Remove trailing newline
+        @record = split /\=/, $line;
+        $data->{"cpu"}->{"temperature"} = $record[1];
+    }
+    close($fh) or warn "Error closing pipe: $!";
+
+    my $cmd = "iostat";
+    open(my $fh, '-|', $cmd) or die "Failed to execute '$cmd': $!";
+    while (my $line = <$fh>) {
+        chomp($line);  # Remove trailing newline
+        @record = split /\=/, $line;
+        $data->{"cpu"}->{"idle"} = $record[-1];
+    }
+    close($fh) or warn "Error closing pipe: $!";
+}
+
 initData();
+setCpuStats();
 
 sub setBytes {
     my $subid = shift;

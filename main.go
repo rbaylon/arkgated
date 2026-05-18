@@ -116,7 +116,14 @@ func run(c *config, out io.Writer, sock net.Listener) error {
 				}
 			}
 			if cmd.Name == "CheckPF" {
-				pfconfig.PfCreate(pfcfg.Router, c.rundir, c.srvcurl, apitoken)
+				pferr := pfconfig.PfCreate(pfcfg.Router, c.rundir, c.srvcurl, apitoken)
+				if pferr != nil {
+					log.Println(err)
+					_, err = conn.Write([]byte("NOK"))
+					if err != nil {
+						log.Println(err)
+					}
+				}
 			}
 			_, err = cmd.Run()
 			if err != nil {

@@ -256,6 +256,9 @@ bind tunnel from PPPOE%d authenticated by LOCAL to pppac%d
 
 func PfCreate(router string, rundir string, urlbase string, t *string) error {
 	newpfcfg, err := GetSubs(urlbase+"pfconfig/query/"+router, t)
+	if err != nil {
+		return err
+	}
 	c := newpfcfg
 	var macros string
 	for _, v := range c.Ifaces {

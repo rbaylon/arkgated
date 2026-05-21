@@ -5,7 +5,7 @@ use JSON;
 
 my $data = {};
 my $key = $ARGV[0];
-my $internalInterface =$ARGV[1];
+my $internalInterface = $ARGV[1];
 sub initData {
     my $s = shift;
     $data->{$s}->{"in"} = 0;
@@ -29,7 +29,7 @@ sub setBytes {
         chomp($line);  # Remove trailing newline
         @record = split /\s+/, $line;
         if ($line =~ /$subid/){
-            if ($line =~ /$internalInterface/) {
+            if ($line =~ /$internalInterface\s+/) {
                 $out = 1;
                 next;
             } else {
@@ -59,7 +59,7 @@ sub setBytes {
                 $data->{$subid}->{"in"} = $record[5] - $record[10];
             }
             $in = 0;
-            $in = 0;
+            $out = 0;
             next;
         }
     }

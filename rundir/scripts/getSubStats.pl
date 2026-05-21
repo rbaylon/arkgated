@@ -41,7 +41,7 @@ sub setBytes {
         }
         if ($out == 1){
             if($dl > 0){
-                $current = ($record[5] - $record[10])
+                $current = ($record[5] - $record[10]);
                 $prev = $data->{$subid}->{"out"};
                 print "Out: current $current - prev $prev\n";
                 $outbytes = $current - $prev;
@@ -59,7 +59,7 @@ sub setBytes {
         }
         if ($in == 1){
             if($dl > 0){
-                $current = ($record[5] - $record[10])
+                $current = ($record[5] - $record[10]);
                 $prev = $data->{$subid}->{"in"};
                 print "in: current $current - prev $prev\n";
                 $inbytes = ($record[5] - $record[10]) - $data->{$subid}->{"in"};

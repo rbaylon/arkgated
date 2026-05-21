@@ -19,7 +19,7 @@ sub setBytes {
     my $subid = shift;
     my $dl = shift;
     my $cmd = "pfctl -sq -v | grep -A1 \" $subid\"";
-    my $record = [];
+    my @record = [];
     open(my $fh, '-|', $cmd) or die "Failed to execute '$cmd': $!";
     my $out = 0;
     my $in = 0;

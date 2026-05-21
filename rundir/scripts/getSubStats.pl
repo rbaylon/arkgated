@@ -25,11 +25,13 @@ sub setBytes {
     my $in = 0;
     my $inbytes = 0;
     my $outbytes = 0;
+    my $current = 0;
+    my $prev = 0;
     while (my $line = <$fh>) {
         chomp($line);  # Remove trailing newline
         @record = split /\s+/, $line;
         if ($line =~ /$subid/){
-            if ($line =~ /$internalInterface\s+/) {
+            if ($line =~ /\s$internalInterface\s+/) {
                 $out = 1;
                 next;
             } else {
@@ -39,9 +41,14 @@ sub setBytes {
         }
         if ($out == 1){
             if($dl > 0){
-                $outbytes = ($record[5] - $record[10]) - $data->{$subid}->{"out"};
+                $current = ($record[5] - $record[10])
+                $prev = $data->{$subid}->{"out"};
+                print "Out: current $current - prev $prev\n";
+                $outbytes = $current - $prev;
                 $outbytes = $outbytes/$dl;
                 $data->{$subid}->{"out"} = ($outbytes)*8;
+                $current = 0;
+                $prev = 0;
             } else {
                 $data->{$subid}->{"dropout"} = 0+$record[10];
                 $data->{$subid}->{"out"} = $record[5] - $record[10];
@@ -52,6 +59,9 @@ sub setBytes {
         }
         if ($in == 1){
             if($dl > 0){
+                $current = ($record[5] - $record[10])
+                $prev = $data->{$subid}->{"in"};
+                print "in: current $current - prev $prev\n";
                 $inbytes = ($record[5] - $record[10]) - $data->{$subid}->{"in"};
                 $inbytes = $inbytes/$dl;
                 $data->{$subid}->{"in"} = ($inbytes)*8;

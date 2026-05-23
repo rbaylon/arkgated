@@ -43,7 +43,6 @@ sub setBytes {
             if($dl > 0){
                 $current = ($record[5] - $record[10]);
                 $prev = $data->{$subid}->{"out"};
-                print "Out: current $current - prev $prev\n";
                 $outbytes = $current - $prev;
                 $outbytes = $outbytes/$dl;
                 $data->{$subid}->{"out"} = ($outbytes)*8;
@@ -57,16 +56,24 @@ sub setBytes {
             $in = 0;
             next;
         }
+        my $bytescount = 0;
         if ($in == 1){
             if($dl > 0){
-                $current = ($record[5] - $record[10]);
-                $prev = $data->{$subid}->{"in"};
-                print "in: current $current - prev $prev\n";
-                $inbytes = ($record[5] - $record[10]) - $data->{$subid}->{"in"};
-                $inbytes = $inbytes/$dl;
-                $data->{$subid}->{"in"} = ($inbytes)*8;
+                if ($record[5] > 0) {
+                    if ($bytescount == $record[5]) {
+                        next;
+                    }
+                    $current = ($record[5] - $record[10]);
+                    $prev = $data->{$subid}->{"in"};
+                    $inbytes = ($record[5] - $record[10]) - $data->{$subid}->{"in"};
+                    $inbytes = $inbytes/$dl;
+                    $data->{$subid}->{"in"} = ($inbytes)*8;
+                    $current = 0;
+                    $prev = 0;
+                }
             } else {
-                $data->{$subid}->{"in"} = $record[5] - $record[10];
+                $bytescount = $record[5];
+                $data->{$subid}->{"in"} = ($record[5] - $record[10]);
             }
             $in = 0;
             $out = 0;

@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/namsral/flag"
 	Arkcommand "github.com/rbaylon/arkgated/arkcommand"
@@ -85,7 +84,6 @@ func run(c *config, out io.Writer, sock net.Listener) error {
 	if err != nil {
 		log.Println("Error creating pf config file: ", err)
 	}
-	startTime = time.Now()
 	for {
 		newtoken := refreshToken(c)
 		if newtoken != nil {

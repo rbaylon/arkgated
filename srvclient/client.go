@@ -10,6 +10,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	Arkcommand "github.com/rbaylon/arkgated/arkcommand"
 	pfconfigmodel "github.com/rbaylon/srvcman/modules/pfconfig/model"
 )
@@ -112,4 +113,29 @@ func ExecScripts(cmd *Arkcommand.Arkcmd, outfile string, wt time.Duration) {
 		}
 		time.Sleep(wt * time.Second)
 	}
+}
+
+func CheckExpirationWithoutVerify(tokenStr string) (bool, error) {
+	parser := jwt.NewParser()
+	var claims jwt.MapClaims
+
+	// Parse unverified explicitly skips signature validation
+	_, _, err := parser.ParseUnverified(tokenStr, &claims)
+	if err != nil {
+		return false, err
+	}
+
+	// Extract the standard 'exp' claim safely
+	exp, err := claims.GetExpirationTime()
+	if err != nil {
+		return false, fmt.Errorf("failed to get expiration: %w", err)
+	}
+
+	if exp == nil {
+		return false, fmt.Errorf("exp claim is missing from token")
+	}
+
+	// Compare token expiration timestamp with current system time
+	isExpired := exp.Before(time.Now())
+	return isExpired, nil
 }

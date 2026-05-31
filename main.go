@@ -56,18 +56,17 @@ func (c *config) init(args []string) error {
 	return nil
 }
 
-var startTime time.Time
-
 func refreshToken(c *config) *string {
-	limit := 1440 * time.Minute // 1day
-	uptime := time.Since(startTime) * time.Minute
-	if uptime > limit {
+	expired, err := srvclient.CheckExpirationWithoutVerify(*apitoken)
+	if err != nil {
+		log.Println(err)
+	}
+	if expired {
 		token, err := srvclient.GetToken(c.creds, c.srvcurl+"login")
 		if err != nil {
 			return nil
 		}
 		log.Println("Token refreshed")
-		startTime = time.Now()
 		return token
 	}
 	return nil

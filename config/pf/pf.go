@@ -257,6 +257,7 @@ bind tunnel from PPPOE%d authenticated by LOCAL to pppac%d
 func PfCreate(router string, rundir string, urlbase string, t *string) error {
 	newpfcfg, err := GetSubs(urlbase+"pfconfig/query/"+router, t)
 	if err != nil {
+		log.Println(err)
 		return err
 	}
 	c := newpfcfg
@@ -340,10 +341,6 @@ block in quick from <martians>
 	}
 	var gateways string
 	var lbrules string
-	if err != nil {
-		log.Println(err)
-		return err
-	}
 	if c.LoadBalance {
 		gateways = fmt.Sprintf("route-to { %s } round-robin sticky-address", strings.Join(gws, ", "))
 	} else {
@@ -456,8 +453,8 @@ block in quick from <martians>
 						//subpass = fmt.Sprintf("%spass in quick on $%s inet proto { tcp, udp } from %s to any port { 5060, 8080 } %s set queue (%s%stest, %slow) set prio 7 tag \"%stest\"\n",
 						//subpass, i.Name, sub.FramedIp, gateway, ident, i.Name, i.Name, ident)
 
-						subpass = fmt.Sprintf("%spass in quick on $%s from %s %s set queue (%s%s, %slow) %s tag \"%s\"\n",
-							subpass, i.Name, sub.FramedIp, gateway, ident, i.Name, i.Name, priority, ident)
+						subpass = fmt.Sprintf("%spass in quick on $%s from %s %s set queue (%s%s, %slow) %s label \"%s\" tag \"%s\"\n",
+							subpass, i.Name, sub.FramedIp, gateway, ident, i.Name, i.Name, priority, sub.FramedIp, ident)
 					}
 				}
 			}

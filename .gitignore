@@ -28,3 +28,4 @@ rundir/wifilist.txt
 *.conf
 rundir/config.json
 sample.config
+tags

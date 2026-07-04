@@ -4,12 +4,20 @@
 #
 # rc.d script for arkgated
 
-daemon="/usr/local/arkgate/arkgated/arkgated"
+daemon_execdir="/usr/local/arkgate/arkgated"
+daemon="arkgated"
 # daemon_user="admin"
 daemon_name="arkgated"
-daemon_flags="--config /usr/local/arkgate/arkgated/app.config >>/var/log/${daemon_name}.log 2>&1"
+daemon_flags="--config ${daemon_execdir}/app.config"
+daemon_logger="daemon.info"
 pidfile="/var/run/${daemon_name}.pid"
 
 . /etc/rc.d/rc.subr
+
+pexp="${daemon} ${daemon_flags}"
+
+rc_reload=YES
+
+rc_bg=YES
 
 rc_cmd $1

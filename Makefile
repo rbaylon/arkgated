@@ -12,12 +12,13 @@ rc:
 
 install:
 	mkdir -p ${distdir}
-	install -m 755 ${app} ${distdir}/
-	install rundir ${distdir}/
+	install -m 755 ${app} /usr/local/sbin/
+	cp -r rundir ${distdir}/
 	install app.config ${distdir}/
 
 dist:
 	make install
+	install -m 755 ${app} ${distdir}/
 	cp systemfiles/rc.arkgated ${distdir}/
 	cd ${distdir}
 	cd ..

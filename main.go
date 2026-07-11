@@ -71,7 +71,23 @@ func refreshToken(c *config) *string {
 	return nil
 }
 
-func run(c *config, out io.Writer, sock net.Listener) error {
+func worker(job <-chan Arkcommand.Arkcmd, result chan<- string, ctx context.Context) {
+	for {
+		select {
+		case cmd := <-job:
+			_, err := cmd.Run()
+			if err != nil {
+				log.Println(err)
+				result <- "NOK"
+			}
+			result <- "OK"
+		case <-ctx.Done():
+			break
+		}
+	}
+}
+
+func run(c *config, out io.Writer, sock net.Listener, ctx context.Context) error {
 	log.SetOutput(out)
 	pfcfg, err := pfconfig.Init(c.rundir + "config.json")
 	if err != nil {
@@ -84,6 +100,9 @@ func run(c *config, out io.Writer, sock net.Listener) error {
 	if err != nil {
 		log.Println("Error creating pf config file: ", err)
 	}
+	job := make(chan Arkcommand.Arkcmd)
+	result := make(chan string)
+	go worker(job, result, ctx)
 	for {
 		newtoken := refreshToken(c)
 		if newtoken != nil {
@@ -122,15 +141,8 @@ func run(c *config, out io.Writer, sock net.Listener) error {
 					}
 				}
 			}
-			_, err = cmd.Run()
-			if err != nil {
-				log.Println(err)
-				_, err = conn.Write([]byte("NOK"))
-				if err != nil {
-					log.Println(err)
-				}
-			}
-			conn.Write([]byte("OK"))
+			job <- cmd
+			conn.Write([]byte(<-result))
 		}(conn)
 	}
 }

@@ -104,46 +104,51 @@ func run(c *config, out io.Writer, sock net.Listener, ctx context.Context) error
 	result := make(chan string)
 	go worker(job, result, ctx)
 	for {
-		newtoken := refreshToken(c)
-		if newtoken != nil {
-			apitoken = newtoken
-		}
-		log.Println("Blocking until we get connection")
-		conn, err := sock.Accept()
-		if err != nil {
-			return err
-		}
-		go func(conn net.Conn) {
-			log.Println("connection accepted")
-			defer conn.Close()
-			buf := make([]byte, c.maxbuff)
-			n, err := conn.Read(buf)
-			if err != nil {
-				log.Println(err)
+		select {
+		case <-ctx.Done():
+			break
+		default:
+			newtoken := refreshToken(c)
+			if newtoken != nil {
+				apitoken = newtoken
 			}
-			msg := buf[:n]
-			var cmd Arkcommand.Arkcmd
-			err = json.Unmarshal(msg, &cmd)
-			log.Printf("%v", cmd)
+			log.Println("Blocking until we get connection")
+			conn, err := sock.Accept()
 			if err != nil {
-				_, err = conn.Write([]byte("NOK"))
+				return err
+			}
+			go func(conn net.Conn) {
+				log.Println("connection accepted")
+				defer conn.Close()
+				buf := make([]byte, c.maxbuff)
+				n, err := conn.Read(buf)
 				if err != nil {
-					log.Println("Reply error: ", err)
-				}
-			}
-			if cmd.Name == "CheckPF" {
-				pferr := pfconfig.PfCreate(pfcfg.Router, c.rundir, c.srvcurl, apitoken)
-				if pferr != nil {
 					log.Println(err)
+				}
+				msg := buf[:n]
+				var cmd Arkcommand.Arkcmd
+				err = json.Unmarshal(msg, &cmd)
+				log.Printf("%v", cmd)
+				if err != nil {
 					_, err = conn.Write([]byte("NOK"))
 					if err != nil {
-						log.Println(err)
+						log.Println("Reply error: ", err)
 					}
 				}
-			}
-			job <- cmd
-			conn.Write([]byte(<-result))
-		}(conn)
+				if cmd.Name == "CheckPF" {
+					pferr := pfconfig.PfCreate(pfcfg.Router, c.rundir, c.srvcurl, apitoken)
+					if pferr != nil {
+						log.Println(err)
+						_, err = conn.Write([]byte("NOK"))
+						if err != nil {
+							log.Println(err)
+						}
+					}
+				}
+				job <- cmd
+				conn.Write([]byte(<-result))
+			}(conn)
+		}
 	}
 }
 

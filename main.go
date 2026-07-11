@@ -211,7 +211,7 @@ func main() {
 		log.Println(err)
 	}
 
-	if err := run(c, os.Stdout, socket); err != nil {
+	if err := run(c, os.Stdout, socket, ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "%s\n", err)
 		os.Exit(1)
 	}

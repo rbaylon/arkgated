@@ -72,6 +72,7 @@ func refreshToken(c *config) *string {
 }
 
 func worker(job <-chan Arkcommand.Arkcmd, result chan<- string, ctx context.Context) {
+	log.Println("Executioner running")
 	for {
 		select {
 		case cmd := <-job:
@@ -82,7 +83,7 @@ func worker(job <-chan Arkcommand.Arkcmd, result chan<- string, ctx context.Cont
 			}
 			result <- "OK"
 		case <-ctx.Done():
-			break
+			return
 		}
 	}
 }
@@ -106,7 +107,7 @@ func run(c *config, out io.Writer, sock net.Listener, ctx context.Context) error
 	for {
 		select {
 		case <-ctx.Done():
-			break
+			return fmt.Errorf("Done running")
 		default:
 			newtoken := refreshToken(c)
 			if newtoken != nil {

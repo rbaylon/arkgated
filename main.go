@@ -127,7 +127,6 @@ func run(c *config, out io.Writer, sock net.Listener, ctx context.Context) error
 			}
 			go func(conn net.Conn) {
 				log.Println("connection accepted")
-				defer conn.Close()
 				buf := make([]byte, c.maxbuff)
 				n, err := conn.Read(buf)
 				if err != nil {

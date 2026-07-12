@@ -27,6 +27,11 @@ type config struct {
 	creds    string
 }
 
+type joborder struct {
+	cmd  Arkcommand.Arkcmd
+	conn net.Conn
+}
+
 func (c *config) init(args []string) error {
 	flags := flag.NewFlagSet(args[0], flag.ExitOnError)
 	flags.String(flag.DefaultConfigFlagname, "", "Path to config file")
@@ -71,17 +76,19 @@ func refreshToken(c *config) *string {
 	return nil
 }
 
-func worker(job <-chan Arkcommand.Arkcmd, result chan<- string, ctx context.Context) {
+func worker(job <-chan joborder, ctx context.Context) {
 	log.Println("Executioner running")
 	for {
 		select {
-		case cmd := <-job:
-			_, err := cmd.Run()
+		case jo := <-job:
+			_, err := jo.cmd.Run()
 			if err != nil {
 				log.Println(err)
-				result <- "NOK"
+				jo.conn.Write([]byte("NOK"))
+			} else {
+				jo.conn.Write([]byte("OK"))
 			}
-			result <- "OK"
+			jo.conn.Close()
 		case <-ctx.Done():
 			return
 		}
@@ -101,9 +108,8 @@ func run(c *config, out io.Writer, sock net.Listener, ctx context.Context) error
 	if err != nil {
 		log.Println("Error creating pf config file: ", err)
 	}
-	job := make(chan Arkcommand.Arkcmd)
-	result := make(chan string)
-	go worker(job, result, ctx)
+	job := make(chan joborder, 10)
+	go worker(job, ctx)
 	for {
 		select {
 		case <-ctx.Done():
@@ -146,8 +152,8 @@ func run(c *config, out io.Writer, sock net.Listener, ctx context.Context) error
 						}
 					}
 				}
-				job <- cmd
-				conn.Write([]byte(<-result))
+				jo := joborder{cmd: cmd, conn: conn}
+				job <- jo
 			}(conn)
 		}
 	}

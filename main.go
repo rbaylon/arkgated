@@ -208,9 +208,9 @@ func main() {
 		log.Fatal(err)
 	}
 
-	statCmd := Arkcommand.Arkcmd{Name: "systats", Cmd: c.rundir + "scripts/getstats.pl", Opts: nil}
+	//statCmd := Arkcommand.Arkcmd{Name: "systats", Cmd: c.rundir + "scripts/getstats.pl", Opts: nil}
 
-	go srvclient.ExecScripts(&statCmd, "/tmp/mystats", 10)
+	//go srvclient.ExecScripts(&statCmd, "/tmp/mystats", 10)
 
 	log.Println("IPC running ")
 

@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/namsral/flag"
 	Arkcommand "github.com/rbaylon/arkgated/arkcommand"
@@ -151,7 +150,6 @@ func run(c *config, out io.Writer, sock net.Listener, ctx context.Context) error
 							log.Println(pferr)
 						}
 					}
-					time.Sleep(3 * time.Second)
 				}
 				jo := joborder{cmd: cmd, conn: conn}
 				job <- jo

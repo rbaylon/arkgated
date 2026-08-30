@@ -14,6 +14,7 @@ import (
 	"github.com/namsral/flag"
 	Arkcommand "github.com/rbaylon/arkgated/arkcommand"
 	pfconfig "github.com/rbaylon/arkgated/config/pf"
+	"github.com/rbaylon/arkgated/config/wizard"
 	"github.com/rbaylon/arkgated/srvclient"
 )
 
@@ -192,6 +193,14 @@ func main() {
 	go waitForSignal(cancel, ctx, c, signalChan)
 
 	c.init(os.Args)
+
+	configPath := c.rundir + "config.json"
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		if err := wizard.Run(configPath); err != nil {
+			log.Fatal(err)
+		}
+	}
+
 	socket, err := net.Listen("unix", c.sockfile)
 	if err != nil {
 		log.Fatal(err)

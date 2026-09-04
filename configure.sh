@@ -7,8 +7,8 @@ echo "creating arkgate group"
 groupadd arkgate
 echo "done"
 
-echo "Creating arkadmin user..."
-adduser -batch arkadmin arkgate $passwd -unencrypted
+echo "Creating admin user..."
+adduser -batch admin arkgate $passwd -unencrypted
 echo "done"
 
 cd /dev/

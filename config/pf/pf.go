@@ -384,7 +384,7 @@ block in quick from <martians>
 		log.Println(err)
 		return err
 	}
-	err = os.WriteFile("/etc/npppd/npppd-users-tmp", []byte(pppcreds), 0600)
+	err = os.WriteFile("/etc/npppd/npppd-users", []byte(pppcreds), 0600)
 	if err != nil {
 		log.Println(err)
 		return err

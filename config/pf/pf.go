@@ -8,13 +8,11 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 
 	"github.com/MakeNowJust/heredoc"
 	pfconfigmodel "github.com/rbaylon/srvcman/modules/pfconfig/model"
 	planmodel "github.com/rbaylon/srvcman/modules/plans/model"
-	pppoemodel "github.com/rbaylon/srvcman/modules/pppoes/model"
 	vlanmodel "github.com/rbaylon/srvcman/modules/vlans/model"
 )
 
@@ -63,85 +61,6 @@ func GetSubs(url string, token *string) (*pfconfigmodel.Pfconfig, error) {
 	var cfg pfconfigmodel.Pfconfig
 	json.Unmarshal(responseData, &cfg)
 	return &cfg, nil
-}
-
-func GetPpp(token *string, urlbase string, pfconfigid uint) ([]pppoemodel.Pppoe, error) {
-	client := &http.Client{}
-	req, _ := http.NewRequest("GET", urlbase+"pppoe/pfconfig/"+strconv.Itoa(int(pfconfigid)), nil)
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", *token))
-	res, err := client.Do(req)
-	if err != nil {
-		log.Println(err)
-		res.Body.Close()
-		return nil, err
-	}
-	if res.StatusCode != 200 {
-		res.Body.Close()
-		return nil, fmt.Errorf("npppd record not found for pfconfig id: %d", pfconfigid)
-	}
-	defer res.Body.Close()
-	responseData, ioerr := io.ReadAll(res.Body)
-	if ioerr != nil {
-		return nil, ioerr
-	}
-	ppp := []pppoemodel.Pppoe{}
-	json.Unmarshal(responseData, &ppp)
-	return ppp, nil
-}
-
-func DhcpCreate(c *pfconfigmodel.Pfconfig, rundir string) error {
-	dhcp := ""
-	for _, d := range c.Dhcps {
-		net_block := heredoc.Docf(`
-subnet %s netmask %s {
-  option routers %s;
-  option domain-name-servers %s, 1.1.1.1, 1.0.0.1;
-  range %s;
-}
-`, d.Subnet, d.Netmask, d.Routers, d.Dnsservers, d.Range)
-		dhcp = fmt.Sprintf("%s%s", dhcp, net_block)
-	}
-	err := os.WriteFile(rundir+"dhcpd.conf", []byte(dhcp), 0600)
-	if err != nil {
-		log.Println(err)
-		return err
-	}
-	return nil
-}
-
-func DnsCreate(c *pfconfigmodel.Pfconfig, rundir string) error {
-	dnsblock := heredoc.Docf(`
-server:
-    interface: 0.0.0.0
-    #outgoing-interface: 192.168.254.254
-    # Use system CA bundle for TLS verification
-    tls-cert-bundle: "/etc/ssl/cert.pem"
-    access-control: 172.16.0.0/12 allow
-    do-not-query-localhost: no
-    hide-identity: yes
-    hide-version: yes
-    prefetch: yes
-
-forward-zone:
-    name: "."
-    forward-tls-upstream: yes
-
-    # Primary upstreams (DNS over TLS)
-    forward-addr: 1.1.1.1@853
-    forward-addr: 1.0.0.1@853
-    forward-addr: 9.9.9.9@853
-    forward-addr: 149.112.112.112@853
-
-    # Fallback upstreams (plain DNS, port 53)
-    forward-addr: 8.8.8.8
-    forward-addr: 8.8.4.4
-	`)
-	err := os.WriteFile(rundir+"unbound.conf", []byte(dnsblock), 0600)
-	if err != nil {
-		log.Println(err)
-		return err
-	}
-	return nil
 }
 
 type vlanmap struct {
@@ -207,48 +126,6 @@ func ConfigCreate(c *pfconfigmodel.Pfconfig, rundir string) error {
 			log.Println(err)
 			return err
 		}
-	}
-
-	return nil
-}
-
-func NppdCreate(token *string, urlbase string, rundir string, pfconfigid uint) error {
-	nppd, err := GetPpp(token, urlbase, pfconfigid)
-	if err != nil {
-		return err
-	}
-	npppdauth := heredoc.Docf(`
-authentication LOCAL type local {
-        users-file "/etc/npppd/npppd-users"
-        user-max-session 1
-}
-
-		`)
-
-	cfg := fmt.Sprintf("%s\n", npppdauth)
-	for _, d := range nppd {
-		npppd := heredoc.Docf(`
-tunnel PPPOE%d protocol pppoe {
-		listen on interface %s
-}
-
-ipcp IPCP%d {
-		pool-address %s
-		dns-servers %s
-}
-
-interface pppac%d address %s ipcp IPCP%d
-bind tunnel from PPPOE%d authenticated by LOCAL to pppac%d
-
-`,
-			d.DevIndex, d.Device, d.DevIndex, d.PoolAddress, d.DnsAddress, d.DevIndex, d.Ip,
-			d.DevIndex, d.DevIndex, d.DevIndex)
-		cfg = fmt.Sprintf("%s%s\n", cfg, npppd)
-	}
-	err = os.WriteFile("/etc/npppd/npppd.conf.tmp", []byte(cfg+"\n"), 0644)
-	if err != nil {
-		log.Println(err)
-		return err
 	}
 
 	return nil
@@ -512,26 +389,11 @@ block in quick from <martians>
 		log.Println(err)
 		return err
 	}
-	err = DhcpCreate(c, rundir)
-	if err != nil {
-		log.Println(err)
-		return err
-	}
-
-	err = DnsCreate(c, rundir)
-	if err != nil {
-		log.Println(err)
-		return err
-	}
 
 	err = ConfigCreate(c, rundir)
 	if err != nil {
 		log.Println(err)
 		return err
-	}
-	err = NppdCreate(t, urlbase, rundir, newpfcfg.ID)
-	if err != nil {
-		log.Println(err)
 	}
 	return nil
 }

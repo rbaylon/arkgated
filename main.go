@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -19,13 +21,15 @@ import (
 )
 
 type config struct {
-	maxbuff  int
-	arkgid   int
-	srvcurl  string
-	sockfile string
-	cmdfile  string
-	rundir   string
-	creds    string
+	maxbuff     int
+	srvcurl     string
+	listenaddr  string
+	tlscert     string
+	tlskey      string
+	tlsclientca string
+	cmdfile     string
+	rundir      string
+	creds       string
 }
 
 type joborder struct {
@@ -38,13 +42,15 @@ func (c *config) init(args []string) error {
 	flags.String(flag.DefaultConfigFlagname, "", "Path to config file")
 
 	var (
-		maxbuff  = flags.Int("maxbuff", 1024, "Max buffer size")
-		srvcurl  = flags.String("srvcurl", "http://127.0.0.1/api/v1/", "Service manager url")
-		sockfile = flags.String("socketfile", "/tmp/arkgated.sock", "Path to create the socket file")
-		arkgid   = flags.Int("arkgid", 1001, "arkgate group id")
-		cmdfile  = flags.String("cmdfile", "./cmd.json", "Path to json command file")
-		rundir   = flags.String("rundir", "./rundir/", "Path to rundir")
-		creds    = flags.String("creds", "./rundir/", "Basic auth api creds")
+		maxbuff     = flags.Int("maxbuff", 1024, "Max buffer size")
+		srvcurl     = flags.String("srvcurl", "http://127.0.0.1/api/v1/", "Service manager url")
+		listenaddr  = flags.String("listenaddr", "0.0.0.0:8443", "Network address to listen for IPC commands on")
+		tlscert     = flags.String("tlscert", "./rundir/arkgated.crt", "Path to this daemon's TLS server certificate")
+		tlskey      = flags.String("tlskey", "./rundir/arkgated.key", "Path to this daemon's TLS server private key")
+		tlsclientca = flags.String("tlsclientca", "./rundir/ca.crt", "Path to the CA certificate used to verify client (srvcman) certificates")
+		cmdfile     = flags.String("cmdfile", "./cmd.json", "Path to json command file")
+		rundir      = flags.String("rundir", "./rundir/", "Path to rundir")
+		creds       = flags.String("creds", "./rundir/", "Basic auth api creds")
 	)
 
 	if err := flags.Parse(args[1:]); err != nil {
@@ -53,12 +59,42 @@ func (c *config) init(args []string) error {
 
 	c.maxbuff = *maxbuff
 	c.srvcurl = *srvcurl
-	c.sockfile = *sockfile
-	c.arkgid = *arkgid
+	c.listenaddr = *listenaddr
+	c.tlscert = *tlscert
+	c.tlskey = *tlskey
+	c.tlsclientca = *tlsclientca
 	c.cmdfile = *cmdfile
 	c.rundir = *rundir
 	c.creds = *creds
 	return nil
+}
+
+// serverTLSConfig builds the mutual-TLS config for the IPC listener:
+// arkgated presents certfile/keyfile as its server identity, and only
+// accepts client connections presenting a certificate signed by
+// clientcafile - this is what lets srvcman authenticate to run privileged
+// commands now that the listener is network-reachable instead of gated by
+// Unix socket file permissions. Certs/keys are expected to come from the
+// deployment's own PKI tooling; this daemon only ever reads them.
+func serverTLSConfig(certfile, keyfile, clientcafile string) (*tls.Config, error) {
+	cert, err := tls.LoadX509KeyPair(certfile, keyfile)
+	if err != nil {
+		return nil, fmt.Errorf("loading TLS server cert/key: %w", err)
+	}
+	caPEM, err := os.ReadFile(clientcafile)
+	if err != nil {
+		return nil, fmt.Errorf("reading client CA cert: %w", err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(caPEM) {
+		return nil, fmt.Errorf("no certificates found in client CA file %s", clientcafile)
+	}
+	return &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		ClientAuth:   tls.RequireAndVerifyClientCert,
+		ClientCAs:    pool,
+		MinVersion:   tls.VersionTLS12,
+	}, nil
 }
 
 func refreshToken(c *config) *string {
@@ -166,7 +202,6 @@ func waitForSignal(cancel context.CancelFunc, ctx context.Context, c *config, si
 			switch s {
 			case syscall.SIGINT, syscall.SIGTERM:
 				log.Printf("Got SIGINT/SIGTERM, exiting.")
-				os.Remove(c.sockfile)
 				cancel()
 			case syscall.SIGHUP:
 				log.Println("SIGHUP received. Relaoding config.")
@@ -201,15 +236,11 @@ func main() {
 		}
 	}
 
-	socket, err := net.Listen("unix", c.sockfile)
+	tlsConfig, err := serverTLSConfig(c.tlscert, c.tlskey, c.tlsclientca)
 	if err != nil {
 		log.Fatal(err)
 	}
-	err = os.Chown(c.sockfile, os.Getuid(), c.arkgid)
-	if err != nil {
-		log.Fatal(err)
-	}
-	err = os.Chmod(c.sockfile, 0660)
+	socket, err := tls.Listen("tcp", c.listenaddr, tlsConfig)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -218,7 +249,7 @@ func main() {
 
 	//go srvclient.ExecScripts(&statCmd, "/tmp/mystats", 10)
 
-	log.Println("IPC running ")
+	log.Println("IPC running (mTLS) on " + c.listenaddr)
 
 	token, err := srvclient.GetToken(c.creds, c.srvcurl+"login")
 	apitoken = token

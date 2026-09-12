@@ -382,7 +382,7 @@ block in quick from <martians>
 		return err
 	}
 	configstring := macros + plantables + tables + queues + planqueue + subqueue + matches + defaultblock + defaultqrules + passrules + strules + fwrules + subpass + lbrules
-	err = os.WriteFile(rundir+"pf.conf", []byte(configstring), 0600)
+	err = os.WriteFile("/tmp/pf.conf", []byte(configstring), 0600)
 	if err != nil {
 		log.Println(err)
 		return err

@@ -181,13 +181,11 @@ func run(c *config, out io.Writer, sock net.Listener, ctx context.Context) error
 			if newtoken != nil {
 				apitoken = newtoken
 			}
-			log.Println("Blocking until we get connection")
 			conn, err := sock.Accept()
 			if err != nil {
 				return err
 			}
 			go func(conn net.Conn) {
-				log.Println("connection accepted")
 				buf := make([]byte, c.maxbuff)
 				n, err := conn.Read(buf)
 				if err != nil {
@@ -196,7 +194,10 @@ func run(c *config, out io.Writer, sock net.Listener, ctx context.Context) error
 				msg := buf[:n]
 				var cmd Arkcommand.Arkcmd
 				err = json.Unmarshal(msg, &cmd)
-				log.Printf("%v", cmd)
+				if !Arkcommand.IsQuiet(cmd.Name) {
+					log.Println("connection accepted")
+					log.Printf("%v", cmd)
+				}
 				if err != nil {
 					_, err = conn.Write([]byte("NOK"))
 					if err != nil {

@@ -442,7 +442,7 @@ func DhcpCreate(rundir, urlbase string, token *string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(rundir+"dhcpd.conf", []byte(conf), 0640)
+	return os.WriteFile("/tmp/dhcpd.conf", []byte(conf), 0640)
 }
 
 // DnsCreate is DhcpCreate's unbound.conf equivalent, fetching from srvcman's
@@ -452,7 +452,7 @@ func DnsCreate(rundir, urlbase string, token *string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(rundir+"unbound.conf", []byte(conf), 0640)
+	return os.WriteFile("/tmp/unbound.conf", []byte(conf), 0640)
 }
 
 // PppoeCreate is DhcpCreate's npppd.conf equivalent, fetching from srvcman's
@@ -462,7 +462,7 @@ func PppoeCreate(rundir, urlbase string, token *string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(rundir+"npppd.conf", []byte(conf), 0640)
+	return os.WriteFile("/tmp/npppd.conf", []byte(conf), 0640)
 }
 
 // promoteIfDifferent replaces dst with src's content, but only if they

@@ -30,14 +30,34 @@ type Cmd interface {
 	RunWithOutput() (int, []byte)
 }
 
+// quietCommands are periodic, high-frequency commands - gatewaymonitor's
+// health-check ping (every pingInterval, per monitored gateway) and
+// pfifaces' interface traffic-stats poll (netstat -ibn, hit by the UI
+// dashboard on a short interval) - whose output isn't worth a log line on
+// every single run; at that volume they drown out everything else in the
+// log. Failures still surface through the caller's own handling
+// (gatewaymonitor's success/failure history, the traffic-stats error
+// response), just not as raw command output here.
+var quietCommands = map[string]bool{
+	"HealthPing": true,
+	"Netstat":    true,
+}
+
+// IsQuiet reports whether name is a high-frequency command whose
+// connection/output logging should be suppressed - see quietCommands.
+func IsQuiet(name string) bool {
+	return quietCommands[name]
+}
+
 func (ac *Arkcmd) Run() (int, error) {
 	cmd := exec.Command(ac.Cmd, ac.Opts...)
 	out, err := cmd.Output()
-	if err != nil {
+	if !quietCommands[ac.Name] {
 		log.Println(string(out))
+	}
+	if err != nil {
 		return 1, err
 	}
-	log.Println(string(out))
 	return 0, nil
 }
 
@@ -48,18 +68,22 @@ func (ac *Arkcmd) Run() (int, error) {
 // process's real exit code when available, 1 otherwise (e.g. the binary
 // itself couldn't be started).
 func (ac *Arkcmd) RunWithOutput() (int, []byte) {
-	log.Println("running:", ac.Cmd)
+	quiet := quietCommands[ac.Name]
+	if !quiet {
+		log.Println("running:", ac.Cmd)
+	}
 	cmd := exec.Command(ac.Cmd, ac.Opts...)
 	out, err := cmd.CombinedOutput()
-	if err != nil {
+	if !quiet {
 		log.Println(string(out))
+	}
+	if err != nil {
 		code := 1
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			code = exitErr.ExitCode()
 		}
 		return code, out
 	}
-	log.Println(string(out))
 	return 0, out
 }
 

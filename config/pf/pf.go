@@ -1,6 +1,7 @@
 package pfconfig
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -8,7 +9,9 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/MakeNowJust/heredoc"
 	pfconfigmodel "github.com/rbaylon/srvcman/modules/pfconfig/model"
@@ -396,6 +399,145 @@ block in quick from <martians>
 		return err
 	}
 	return nil
+}
+
+// fetchConfText GETs a {"conf": "..."} response from urlbase (e.g. srvcman's
+// /api/v1/dhcpserver/conf or /api/v1/unbounddns/conf) and returns the conf
+// text. DhcpCreate/DnsCreate use this to pull config text rendered
+// server-side by srvcman, which owns the underlying DhcpServer/UnboundDns
+// records, rather than duplicating that rendering logic here.
+func fetchConfText(url string, token *string) (string, error) {
+	client := &http.Client{}
+	req, _ := http.NewRequest("GET", url, nil)
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", *token))
+	res, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer res.Body.Close()
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		return "", err
+	}
+	var resp struct {
+		Conf string `json:"conf"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return "", err
+	}
+	return resp.Conf, nil
+}
+
+// DhcpCreate fetches the freshly rendered dhcpd.conf text from srvcman
+// (which owns the DhcpServer records) and stages it at rundir+"dhcpd.conf" -
+// the same path modules/changes' apply flow on srvcman then backs up/stages
+// into /etc/dhcpd.conf and restarts dhcpd from, via ordinary Arkcmd mv/rcctl
+// commands. srvcman no longer writes this file itself: since srvcman and
+// arkgated may run on separate hosts, a file srvcman wrote to its own disk
+// was never visible to arkgated's mv of that same path - fetching the
+// content here means the file being backed up/staged always exists on the
+// host doing the backing up.
+func DhcpCreate(rundir, urlbase string, token *string) error {
+	conf, err := fetchConfText(urlbase+"dhcpserver/conf", token)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(rundir+"dhcpd.conf", []byte(conf), 0640)
+}
+
+// DnsCreate is DhcpCreate's unbound.conf equivalent, fetching from srvcman's
+// /unbounddns/conf and staging at rundir+"unbound.conf".
+func DnsCreate(rundir, urlbase string, token *string) error {
+	conf, err := fetchConfText(urlbase+"unbounddns/conf", token)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(rundir+"unbound.conf", []byte(conf), 0640)
+}
+
+// PppoeCreate is DhcpCreate's npppd.conf equivalent, fetching from srvcman's
+// /pppoes/conf and staging at rundir+"npppd.conf".
+func PppoeCreate(rundir, urlbase string, token *string) error {
+	conf, err := fetchConfText(urlbase+"pppoes/conf", token)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(rundir+"npppd.conf", []byte(conf), 0640)
+}
+
+// promoteIfDifferent replaces dst with src's content, but only if they
+// differ (or dst doesn't exist yet) - reports whether it did anything. dst
+// is backed up to a timestamped copy first. src not existing is not an
+// error (e.g. no default gateway configured for this router yet); it just
+// means there's nothing to promote.
+func promoteIfDifferent(src, dst string) (bool, error) {
+	newdata, err := os.ReadFile(src)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	if olddata, err := os.ReadFile(dst); err == nil {
+		if bytes.Equal(olddata, newdata) {
+			return false, nil
+		}
+		if err := os.Rename(dst, fmt.Sprintf("%s.%d", dst, time.Now().Unix())); err != nil {
+			log.Println("promoteIfDifferent: backup of", dst, "failed:", err)
+		}
+	}
+	if err := os.WriteFile(dst, newdata, 0640); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// ApplyIfaces regenerates every configured interface's hostname.<if> file
+// (plus mygate/resolv.conf for the default interface) from live Pfconfig
+// data, then promotes each into /etc and restarts networking for it - but
+// only for files whose freshly rendered content actually differs from
+// what's currently installed, so pinging one gateway's config doesn't
+// disrupt an unrelated interface's active connections with an unneeded
+// netstart. This replaces srvcman's former approach of writing hostname.<if>
+// files to its own /tmp and asking arkgated to mv them: that broke once
+// srvcman and arkgated could run on separate hosts, since the file srvcman
+// wrote was never visible on arkgated's filesystem. Now arkgated both
+// generates and applies these files itself.
+func ApplyIfaces(router, rundir, urlbase string, token *string) ([]string, error) {
+	c, err := GetSubs(urlbase+"pfconfig/query/"+router, token)
+	if err != nil {
+		return nil, err
+	}
+	if err := ConfigCreate(c, rundir); err != nil {
+		return nil, err
+	}
+	var applied []string
+	for _, d := range c.Ifaces {
+		changed, err := promoteIfDifferent(rundir+"hostname."+d.Device, "/etc/hostname."+d.Device)
+		if err != nil {
+			return applied, err
+		}
+		if !changed {
+			continue
+		}
+		if out, err := exec.Command("sh", "/etc/netstart", d.Device).CombinedOutput(); err != nil {
+			log.Println(string(out))
+			return applied, fmt.Errorf("netstart %s: %w", d.Device, err)
+		}
+		applied = append(applied, d.Device)
+	}
+	gwChanged, err := promoteIfDifferent(rundir+"mygate", "/etc/mygate")
+	if err != nil {
+		return applied, err
+	}
+	if gwChanged {
+		if out, err := exec.Command("sh", "/etc/netstart").CombinedOutput(); err != nil {
+			log.Println(string(out))
+			return applied, fmt.Errorf("netstart: %w", err)
+		}
+		applied = append(applied, "mygate")
+	}
+	return applied, nil
 }
 
 func Init(config string) (*pfconfigmodel.Pfconfig, error) {

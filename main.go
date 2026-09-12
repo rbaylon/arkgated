@@ -113,17 +113,42 @@ func refreshToken(c *config) *string {
 	return nil
 }
 
+// outputResponse is what a WantOutput command gets back, in place of the
+// plain "OK"/"NOK" every other command uses. The connection is closed
+// right after this is written, so the client can just io.ReadAll(conn) and
+// json.Unmarshal the result - no length prefix needed.
+type outputResponse struct {
+	OK     bool   `json:"ok"`
+	Output string `json:"output"`
+	Error  string `json:"error"`
+}
+
 func worker(job <-chan joborder, ctx context.Context) {
 	log.Println("Executioner running")
 	for {
 		select {
 		case jo := <-job:
-			_, err := jo.cmd.Run()
-			if err != nil {
-				log.Println(err)
-				jo.conn.Write([]byte("NOK"))
+			if jo.cmd.WantOutput {
+				code, out := jo.cmd.RunWithOutput()
+				resp := outputResponse{OK: code == 0, Output: string(out)}
+				if code != 0 {
+					resp.Error = fmt.Sprintf("%s exited %d", jo.cmd.Cmd, code)
+				}
+				respBytes, err := json.Marshal(resp)
+				if err != nil {
+					log.Println("marshaling output response:", err)
+					jo.conn.Write([]byte("NOK"))
+				} else {
+					jo.conn.Write(respBytes)
+				}
 			} else {
-				jo.conn.Write([]byte("OK"))
+				_, err := jo.cmd.Run()
+				if err != nil {
+					log.Println(err)
+					jo.conn.Write([]byte("NOK"))
+				} else {
+					jo.conn.Write([]byte("OK"))
+				}
 			}
 			jo.conn.Close()
 		case <-ctx.Done():

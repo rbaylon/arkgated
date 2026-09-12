@@ -203,15 +203,59 @@ func run(c *config, out io.Writer, sock net.Listener, ctx context.Context) error
 						log.Println("Reply error: ", err)
 					}
 				}
-				if cmd.Name == "CheckPF" {
-					pferr := pfconfig.PfCreate(pfcfg.Router, c.rundir, c.srvcurl, apitoken)
-					if pferr != nil {
+				switch cmd.Name {
+				case "CheckPF":
+					// Refreshes pf.conf plus every hostname.<if>/mygate/
+					// resolv.conf file in rundir from live data before the
+					// queued job (pfctl -nf on the file just written) runs.
+					if pferr := pfconfig.PfCreate(pfcfg.Router, c.rundir, c.srvcurl, apitoken); pferr != nil {
 						log.Println(pferr)
-						_, err = conn.Write([]byte("NOK"))
-						if err != nil {
+						if _, err := conn.Write([]byte("NOK")); err != nil {
 							log.Println(pferr)
 						}
 					}
+				case "CheckConf_dhcpd":
+					// Stages a fresh dhcpd.conf (fetched from srvcman) into
+					// rundir before the queued job (dhcpd -nf on that file)
+					// runs - see pfconfig.DhcpCreate.
+					if dherr := pfconfig.DhcpCreate(c.rundir, c.srvcurl, apitoken); dherr != nil {
+						log.Println(dherr)
+						if _, err := conn.Write([]byte("NOK")); err != nil {
+							log.Println(dherr)
+						}
+					}
+				case "CheckConf_unbound":
+					// Same as CheckConf_dhcpd, for unbound.conf.
+					if dnerr := pfconfig.DnsCreate(c.rundir, c.srvcurl, apitoken); dnerr != nil {
+						log.Println(dnerr)
+						if _, err := conn.Write([]byte("NOK")); err != nil {
+							log.Println(dnerr)
+						}
+					}
+				case "BackupConf_npppd":
+					// npppd has no config-validate mode, so srvcman's apply
+					// flow has no "check" step to piggyback the regen
+					// trigger on (unlike dhcpd/unbound) - this is the first
+					// command in its sequence instead, still ahead of the
+					// stage/restart steps that need the fresh file present.
+					if pperr := pfconfig.PppoeCreate(c.rundir, c.srvcurl, apitoken); pperr != nil {
+						log.Println(pperr)
+						if _, err := conn.Write([]byte("NOK")); err != nil {
+							log.Println(pperr)
+						}
+					}
+				case "ApplyIfaces":
+					// Fully self-contained: regenerates and applies
+					// hostname.<if>/mygate itself, so there's no separate
+					// job to queue afterward.
+					if _, aerr := pfconfig.ApplyIfaces(pfcfg.Router, c.rundir, c.srvcurl, apitoken); aerr != nil {
+						log.Println(aerr)
+						conn.Write([]byte("NOK"))
+					} else {
+						conn.Write([]byte("OK"))
+					}
+					conn.Close()
+					return
 				}
 				jo := joborder{cmd: cmd, conn: conn}
 				job <- jo

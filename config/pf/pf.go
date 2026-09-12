@@ -508,12 +508,12 @@ func ApplyIfaces(router, rundir, urlbase string, token *string) ([]string, error
 	if err != nil {
 		return nil, err
 	}
-	if err := ConfigCreate(c, rundir); err != nil {
+	if err := ConfigCreate(c, "/tmp/"); err != nil {
 		return nil, err
 	}
 	var applied []string
 	for _, d := range c.Ifaces {
-		changed, err := promoteIfDifferent(rundir+"hostname."+d.Device, "/etc/hostname."+d.Device)
+		changed, err := promoteIfDifferent("/tmp/hostname."+d.Device, "/etc/hostname."+d.Device)
 		if err != nil {
 			return applied, err
 		}
@@ -526,7 +526,7 @@ func ApplyIfaces(router, rundir, urlbase string, token *string) ([]string, error
 		}
 		applied = append(applied, d.Device)
 	}
-	gwChanged, err := promoteIfDifferent(rundir+"mygate", "/etc/mygate")
+	gwChanged, err := promoteIfDifferent("/tmp/mygate", "/etc/mygate")
 	if err != nil {
 		return applied, err
 	}

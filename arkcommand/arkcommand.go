@@ -49,6 +49,39 @@ func IsQuiet(name string) bool {
 	return quietCommands[name]
 }
 
+// concurrentCommands are read-only, side-effect-free introspection commands
+// (ping/traceroute/netstat/ifconfig) that main.go's connection handler runs
+// immediately in their own connection's goroutine instead of handing off to
+// the single serialized worker() queue. That queue exists to keep mutating
+// commands (pf.conf/dhcpd.conf/unbound.conf/npppd.conf apply steps, route
+// add/delete) strictly ordered - these commands touch no shared state, so
+// running many of them at once is safe, and doing so matters in practice:
+// gatewaymonitor fires one HealthPing per monitored gateway on every tick,
+// all at once, and pfifaces polls Netstat/ListInterfaces on a short
+// interval too. Funneling those through one serial worker alongside
+// (potentially slow) mutating commands meant a burst of health checks - or
+// even just one slow command in flight at the wrong moment - could blow
+// past the caller's own timeout before ever being dequeued, producing
+// falsely-"down" gateway statuses that reflected queueing delay, not
+// reachability. Add a name here (and nowhere else) for any future
+// read-only command that should get the same treatment; anything that
+// writes a file, moves a file, or changes running state must NOT be added,
+// since ordering among those is relied upon (e.g. pf.conf's
+// check-then-backup-then-move-then-apply sequence).
+var concurrentCommands = map[string]bool{
+	"HealthPing":     true,
+	"Ping":           true,
+	"Traceroute":     true,
+	"Netstat":        true,
+	"ListInterfaces": true,
+}
+
+// IsConcurrent reports whether name is safe to run outside the serialized
+// worker queue - see concurrentCommands.
+func IsConcurrent(name string) bool {
+	return concurrentCommands[name]
+}
+
 func (ac *Arkcmd) Run() (int, error) {
 	cmd := exec.Command(ac.Cmd, ac.Opts...)
 	out, err := cmd.Output()

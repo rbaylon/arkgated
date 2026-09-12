@@ -123,34 +123,43 @@ type outputResponse struct {
 	Error  string `json:"error"`
 }
 
+// runJob executes cmd and writes its result to conn before closing it - the
+// single unit of work shared by worker() (for commands that must stay
+// strictly ordered) and the connection handler's direct call for
+// Arkcommand.IsConcurrent commands (which skip the shared queue entirely
+// and just run here, in their own connection's goroutine).
+func runJob(cmd Arkcommand.Arkcmd, conn net.Conn) {
+	if cmd.WantOutput {
+		code, out := cmd.RunWithOutput()
+		resp := outputResponse{OK: code == 0, Output: string(out)}
+		if code != 0 {
+			resp.Error = fmt.Sprintf("%s exited %d", cmd.Cmd, code)
+		}
+		respBytes, err := json.Marshal(resp)
+		if err != nil {
+			log.Println("marshaling output response:", err)
+			conn.Write([]byte("NOK"))
+		} else {
+			conn.Write(respBytes)
+		}
+	} else {
+		_, err := cmd.Run()
+		if err != nil {
+			log.Println(err)
+			conn.Write([]byte("NOK"))
+		} else {
+			conn.Write([]byte("OK"))
+		}
+	}
+	conn.Close()
+}
+
 func worker(job <-chan joborder, ctx context.Context) {
 	log.Println("Executioner running")
 	for {
 		select {
 		case jo := <-job:
-			if jo.cmd.WantOutput {
-				code, out := jo.cmd.RunWithOutput()
-				resp := outputResponse{OK: code == 0, Output: string(out)}
-				if code != 0 {
-					resp.Error = fmt.Sprintf("%s exited %d", jo.cmd.Cmd, code)
-				}
-				respBytes, err := json.Marshal(resp)
-				if err != nil {
-					log.Println("marshaling output response:", err)
-					jo.conn.Write([]byte("NOK"))
-				} else {
-					jo.conn.Write(respBytes)
-				}
-			} else {
-				_, err := jo.cmd.Run()
-				if err != nil {
-					log.Println(err)
-					jo.conn.Write([]byte("NOK"))
-				} else {
-					jo.conn.Write([]byte("OK"))
-				}
-			}
-			jo.conn.Close()
+			runJob(jo.cmd, jo.conn)
 		case <-ctx.Done():
 			return
 		}
@@ -256,6 +265,14 @@ func run(c *config, out io.Writer, sock net.Listener, ctx context.Context) error
 						conn.Write([]byte("OK"))
 					}
 					conn.Close()
+					return
+				}
+				if Arkcommand.IsConcurrent(cmd.Name) {
+					// Read-only (ping/traceroute/netstat/ifconfig) - runs
+					// right here, in this connection's own goroutine,
+					// instead of behind the serialized worker queue. See
+					// Arkcommand.concurrentCommands for why.
+					runJob(cmd, conn)
 					return
 				}
 				jo := joborder{cmd: cmd, conn: conn}

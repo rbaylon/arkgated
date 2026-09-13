@@ -98,6 +98,20 @@ func serverTLSConfig(certfile, keyfile, clientcafile string) (*tls.Config, error
 }
 
 func refreshToken(c *config) *string {
+	// apitoken is nil whenever the last login attempt failed (e.g. srvcman
+	// unreachable at startup, now a real possibility since it can run on a
+	// separate host) - retry here on every accept-loop tick instead of
+	// dereferencing a nil token, so arkgated self-heals once srvcman comes
+	// back instead of staying permanently stuck.
+	if apitoken == nil {
+		token, err := srvclient.GetToken(c.creds, c.srvcurl+"login")
+		if err != nil {
+			log.Println("refreshToken:", err)
+			return nil
+		}
+		log.Println("Token acquired")
+		return token
+	}
 	expired, err := srvclient.CheckExpirationWithoutVerify(*apitoken)
 	if err != nil {
 		log.Println(err)
@@ -170,13 +184,19 @@ func run(c *config, out io.Writer, sock net.Listener, ctx context.Context) error
 	log.SetOutput(out)
 	pfcfg, err := pfconfig.Init(c.rundir + "config.json")
 	if err != nil {
-		log.Println("Error reading json config: ", err)
+		// pfcfg is nil here - every use below (and every CheckPF/ApplyIfaces
+		// command for the rest of the process's life, via this same pfcfg
+		// captured in the connection handler's closure) dereferences
+		// pfcfg.Router, so there is no safe way to continue running with a
+		// config we failed to load. Fail fast instead of limping along.
+		return fmt.Errorf("reading json config: %w", err)
 	}
 
-	srvclient.Enroll(c.srvcurl, apitoken, pfcfg)
+	if err := srvclient.Enroll(c.srvcurl, apitoken, pfcfg); err != nil {
+		log.Println("Error enrolling router: ", err)
+	}
 
-	err = pfconfig.PfCreate(pfcfg.Router, c.rundir, c.srvcurl, apitoken)
-	if err != nil {
+	if err := pfconfig.PfCreate(pfcfg.Router, c.rundir, c.srvcurl, apitoken); err != nil {
 		log.Println("Error creating pf config file: ", err)
 	}
 	job := make(chan joborder, 10)

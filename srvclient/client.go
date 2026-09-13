@@ -21,6 +21,12 @@ type Token struct {
 }
 
 func Enroll(urlbase string, token *string, pf *pfconfigmodel.Pfconfig) error {
+	if pf == nil {
+		return fmt.Errorf("Enroll: no router config available")
+	}
+	if token == nil {
+		return fmt.Errorf("Enroll: no API token available")
+	}
 	create_url := urlbase + "pfconfig/create"
 	query_url := urlbase + "pfconfig/query/" + pf.Router
 	client := &http.Client{}
@@ -45,12 +51,10 @@ func Enroll(urlbase string, token *string, pf *pfconfigmodel.Pfconfig) error {
 			log.Println("Failed to POST router", err)
 			return err
 		}
-		log.Println(*token)
 		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", *token))
 		res, err := client.Do(req)
 		if err != nil {
 			log.Println(err)
-			res.Body.Close()
 			return err
 		}
 
@@ -60,9 +64,8 @@ func Enroll(urlbase string, token *string, pf *pfconfigmodel.Pfconfig) error {
 				log.Println("Read body error", err)
 			}
 			log.Println(string(b))
-			log.Println("Failed to enroll router", err)
 			res.Body.Close()
-			return fmt.Errorf("failed to enroll router")
+			return fmt.Errorf("failed to enroll router: status %d", res.StatusCode)
 		}
 		_, _ = io.Copy(io.Discard, res.Body)
 		res.Body.Close()
@@ -75,30 +78,27 @@ func Enroll(urlbase string, token *string, pf *pfconfigmodel.Pfconfig) error {
 
 func GetToken(creds string, api_login_url string) (*string, error) {
 	client := &http.Client{}
-	req, _ := http.NewRequest("GET", api_login_url, nil)
-	req.Header.Set("Authorization", fmt.Sprintf("Basic %s", creds))
-	res, err := client.Do(req)
-	log.Println("StatusCode", res.StatusCode)
-	if res.StatusCode != 200 {
-		log.Fatalln("API login failed")
-		res.Body.Close()
-		return nil, fmt.Errorf("api login failed.")
-	}
+	req, err := http.NewRequest("GET", api_login_url, nil)
 	if err != nil {
-		_, _ = io.Copy(io.Discard, res.Body)
-		res.Body.Close()
 		return nil, err
 	}
+	req.Header.Set("Authorization", fmt.Sprintf("Basic %s", creds))
+	res, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
 	responseData, ioerr := io.ReadAll(res.Body)
 	if ioerr != nil {
-		_, _ = io.Copy(io.Discard, res.Body)
-		res.Body.Close()
 		return nil, ioerr
 	}
-	_, _ = io.Copy(io.Discard, res.Body)
-	res.Body.Close()
+	if res.StatusCode != 200 {
+		return nil, fmt.Errorf("api login failed: status %d: %s", res.StatusCode, string(responseData))
+	}
 	var t Token
-	json.Unmarshal(responseData, &t)
+	if err := json.Unmarshal(responseData, &t); err != nil {
+		return nil, err
+	}
 	return &t.Jwt, nil
 }
 

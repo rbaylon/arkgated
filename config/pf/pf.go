@@ -47,13 +47,18 @@ func BroadcastAddr(n *net.IPNet) net.IP {
 }
 
 func GetSubs(url string, token *string) (*pfconfigmodel.Pfconfig, error) {
+	if token == nil {
+		return nil, fmt.Errorf("GetSubs: no API token available")
+	}
 	client := &http.Client{}
-	req, _ := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", *token))
 	res, err := client.Do(req)
 	if err != nil {
 		log.Println(err)
-		res.Body.Close()
 		return nil, err
 	}
 	defer res.Body.Close()
@@ -61,8 +66,13 @@ func GetSubs(url string, token *string) (*pfconfigmodel.Pfconfig, error) {
 	if ioerr != nil {
 		return nil, ioerr
 	}
+	if res.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GetSubs: %s returned %d: %s", url, res.StatusCode, string(responseData))
+	}
 	var cfg pfconfigmodel.Pfconfig
-	json.Unmarshal(responseData, &cfg)
+	if err := json.Unmarshal(responseData, &cfg); err != nil {
+		return nil, err
+	}
 	return &cfg, nil
 }
 
@@ -407,8 +417,14 @@ block in quick from <martians>
 // server-side by srvcman, which owns the underlying DhcpServer/UnboundDns
 // records, rather than duplicating that rendering logic here.
 func fetchConfText(url string, token *string) (string, error) {
+	if token == nil {
+		return "", fmt.Errorf("fetchConfText: no API token available")
+	}
 	client := &http.Client{}
-	req, _ := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return "", err
+	}
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", *token))
 	res, err := client.Do(req)
 	if err != nil {
@@ -418,6 +434,9 @@ func fetchConfText(url string, token *string) (string, error) {
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
 		return "", err
+	}
+	if res.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("fetchConfText: %s returned %d: %s", url, res.StatusCode, string(body))
 	}
 	var resp struct {
 		Conf string `json:"conf"`

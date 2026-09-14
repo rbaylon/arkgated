@@ -27,7 +27,6 @@ type config struct {
 	tlscert     string
 	tlskey      string
 	tlsclientca string
-	cmdfile     string
 	rundir      string
 	creds       string
 }
@@ -48,7 +47,6 @@ func (c *config) init(args []string) error {
 		tlscert     = flags.String("tlscert", "./rundir/arkgated.crt", "Path to this daemon's TLS server certificate")
 		tlskey      = flags.String("tlskey", "./rundir/arkgated.key", "Path to this daemon's TLS server private key")
 		tlsclientca = flags.String("tlsclientca", "./rundir/ca.crt", "Path to the CA certificate used to verify client (srvcman) certificates")
-		cmdfile     = flags.String("cmdfile", "./cmd.json", "Path to json command file")
 		rundir      = flags.String("rundir", "./rundir/", "Path to rundir")
 		creds       = flags.String("creds", "./rundir/", "Basic auth api creds")
 	)
@@ -63,7 +61,6 @@ func (c *config) init(args []string) error {
 	c.tlscert = *tlscert
 	c.tlskey = *tlskey
 	c.tlsclientca = *tlsclientca
-	c.cmdfile = *cmdfile
 	c.rundir = *rundir
 	c.creds = *creds
 	return nil

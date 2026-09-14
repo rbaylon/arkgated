@@ -62,6 +62,8 @@ var concurrentCommands = map[string]bool{
 	"Traceroute":     true,
 	"Netstat":        true,
 	"ListInterfaces": true,
+	"ActiveRoutes":   true,
+	"SystemInfo":     true,
 }
 
 // IsConcurrent reports whether name is safe to run outside the serialized

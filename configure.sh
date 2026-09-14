@@ -21,4 +21,5 @@ cd /dev/
 ./MAKEDEV pppac7
 echo "done"
 
-
+cp -v ${workdir}/rc.arkgated /etc/rc.d/arkgated
+cp -v ${workdir}/sysctl.conf /etc/

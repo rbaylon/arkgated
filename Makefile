@@ -15,11 +15,13 @@ install:
 	install -m 755 ${app} /usr/local/sbin/
 	cp -r rundir ${distdir}/
 	install app.config ${distdir}/
+	install -m 755 configure.sh ${distdir}/
 
 dist:
 	make install
 	install -m 755 ${app} ${distdir}/
-	cp systemfiles/rc.arkgated ${distdir}/
+	install systemfiles/rc.arkgated ${distdir}/
+	install systemfiles/sysctl.conf ${distdir}/
 	cd ${distdir}
 	cd ..
 	tar -czvf ${app}.tar.gz ${app}

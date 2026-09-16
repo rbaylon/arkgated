@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/namsral/flag"
 	Arkcommand "github.com/rbaylon/arkgated/arkcommand"
@@ -21,6 +22,8 @@ import (
 )
 
 type config struct {
+	sockfile    string
+	arkgid      int
 	maxbuff     int
 	srvcurl     string
 	listenaddr  string
@@ -41,6 +44,8 @@ func (c *config) init(args []string) error {
 	flags.String(flag.DefaultConfigFlagname, "", "Path to config file")
 
 	var (
+		sockfile    = flags.String("socketfile", "/tmp/arkgated.sock", "Path to the local Unix domain socket for same-host clients (srvcman/subsportal running on this box); empty disables it")
+		arkgid      = flags.Int("arkgid", 1001, "arkgate group id - owns the Unix socket (mode 0660)")
 		maxbuff     = flags.Int("maxbuff", 1024, "Max buffer size")
 		srvcurl     = flags.String("srvcurl", "http://127.0.0.1/api/v1/", "Service manager url")
 		listenaddr  = flags.String("listenaddr", "0.0.0.0:8443", "Network address to listen for IPC commands on")
@@ -55,6 +60,8 @@ func (c *config) init(args []string) error {
 		return err
 	}
 
+	c.sockfile = *sockfile
+	c.arkgid = *arkgid
 	c.maxbuff = *maxbuff
 	c.srvcurl = *srvcurl
 	c.listenaddr = *listenaddr
@@ -177,7 +184,29 @@ func worker(job <-chan joborder, ctx context.Context) {
 	}
 }
 
-func run(c *config, out io.Writer, sock net.Listener, ctx context.Context) error {
+// refreshTokenLoop calls refreshToken on a fixed interval for as long as ctx
+// is live. This used to run inline, once per accepted connection, right
+// before the single listener's blocking Accept() call - now that arkgated
+// can listen on more than one socket at once (Unix + mTLS), there's no
+// single Accept() to hang it off, so it's its own loop instead. Checks
+// immediately on start (in case apitoken is already nil, e.g. the initial
+// login at startup failed) rather than waiting out the first tick.
+func refreshTokenLoop(c *config, ctx context.Context) {
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+	for {
+		if newtoken := refreshToken(c); newtoken != nil {
+			apitoken = newtoken
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+func run(c *config, out io.Writer, sockets []net.Listener, ctx context.Context) error {
 	log.SetOutput(out)
 	pfcfg, err := pfconfig.Init(c.rundir + "config.json")
 	if err != nil {
@@ -198,104 +227,124 @@ func run(c *config, out io.Writer, sock net.Listener, ctx context.Context) error
 	}
 	job := make(chan joborder, 10)
 	go worker(job, ctx)
-	for {
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("Done running")
-		default:
-			newtoken := refreshToken(c)
-			if newtoken != nil {
-				apitoken = newtoken
-			}
-			conn, err := sock.Accept()
-			if err != nil {
-				return err
-			}
-			go func(conn net.Conn) {
-				buf := make([]byte, c.maxbuff)
-				n, err := conn.Read(buf)
-				if err != nil {
-					log.Println(err)
-				}
-				msg := buf[:n]
-				var cmd Arkcommand.Arkcmd
-				err = json.Unmarshal(msg, &cmd)
-				if !Arkcommand.IsQuiet(cmd.Name) {
-					log.Println("connection accepted")
-					log.Printf("%v", cmd)
-				}
-				if err != nil {
-					_, err = conn.Write([]byte("NOK"))
-					if err != nil {
-						log.Println("Reply error: ", err)
-					}
-				}
-				switch cmd.Name {
-				case "CheckPF":
-					// Refreshes pf.conf plus every hostname.<if>/mygate/
-					// resolv.conf file in rundir from live data before the
-					// queued job (pfctl -nf on the file just written) runs.
-					if pferr := pfconfig.PfCreate(pfcfg.Router, c.rundir, c.srvcurl, apitoken); pferr != nil {
-						log.Println(pferr)
-						if _, err := conn.Write([]byte("NOK")); err != nil {
-							log.Println(pferr)
-						}
-					}
-				case "CheckConf_dhcpd":
-					// Stages a fresh dhcpd.conf (fetched from srvcman) into
-					// rundir before the queued job (dhcpd -nf on that file)
-					// runs - see pfconfig.DhcpCreate.
-					if dherr := pfconfig.DhcpCreate(c.rundir, c.srvcurl, apitoken); dherr != nil {
-						log.Println(dherr)
-						if _, err := conn.Write([]byte("NOK")); err != nil {
-							log.Println(dherr)
-						}
-					}
-				case "CheckConf_unbound":
-					// Same as CheckConf_dhcpd, for unbound.conf.
-					if dnerr := pfconfig.DnsCreate(c.rundir, c.srvcurl, apitoken); dnerr != nil {
-						log.Println(dnerr)
-						if _, err := conn.Write([]byte("NOK")); err != nil {
-							log.Println(dnerr)
-						}
-					}
-				case "BackupConf_npppd":
-					// npppd has no config-validate mode, so srvcman's apply
-					// flow has no "check" step to piggyback the regen
-					// trigger on (unlike dhcpd/unbound) - this is the first
-					// command in its sequence instead, still ahead of the
-					// stage/restart steps that need the fresh file present.
-					if pperr := pfconfig.PppoeCreate(c.rundir, c.srvcurl, apitoken); pperr != nil {
-						log.Println(pperr)
-						if _, err := conn.Write([]byte("NOK")); err != nil {
-							log.Println(pperr)
-						}
-					}
-				case "ApplyIfaces":
-					// Fully self-contained: regenerates and applies
-					// hostname.<if>/mygate itself, so there's no separate
-					// job to queue afterward.
-					if _, aerr := pfconfig.ApplyIfaces(pfcfg.Router, c.rundir, c.srvcurl, apitoken); aerr != nil {
-						log.Println(aerr)
-						conn.Write([]byte("NOK"))
-					} else {
-						conn.Write([]byte("OK"))
-					}
-					conn.Close()
-					return
-				}
-				if Arkcommand.IsConcurrent(cmd.Name) {
-					// Read-only (ping/traceroute/netstat/ifconfig) - runs
-					// right here, in this connection's own goroutine,
-					// instead of behind the serialized worker queue. See
-					// Arkcommand.concurrentCommands for why.
-					runJob(cmd, conn)
-					return
-				}
-				jo := joborder{cmd: cmd, conn: conn}
-				job <- jo
-			}(conn)
+	go refreshTokenLoop(c, ctx)
+
+	// handleConn is shared by every listener's accept loop below - a
+	// command means the same thing regardless of whether it arrived over
+	// the local Unix socket or the remote mTLS listener.
+	handleConn := func(conn net.Conn) {
+		buf := make([]byte, c.maxbuff)
+		n, err := conn.Read(buf)
+		if err != nil {
+			log.Println(err)
 		}
+		msg := buf[:n]
+		var cmd Arkcommand.Arkcmd
+		if err := json.Unmarshal(msg, &cmd); err != nil {
+			log.Println("Unmarshal error:", err)
+			conn.Write([]byte("NOK"))
+			conn.Close()
+			return
+		}
+		if !Arkcommand.IsQuiet(cmd.Name) {
+			log.Println("connection accepted")
+			log.Printf("%v", cmd)
+		}
+		switch cmd.Name {
+		case "CheckPF":
+			// Refreshes pf.conf plus every hostname.<if>/mygate/
+			// resolv.conf file in rundir from live data before the
+			// queued job (pfctl -nf on the file just written) runs.
+			if pferr := pfconfig.PfCreate(pfcfg.Router, c.rundir, c.srvcurl, apitoken); pferr != nil {
+				log.Println(pferr)
+				if _, err := conn.Write([]byte("NOK")); err != nil {
+					log.Println(pferr)
+				}
+			}
+		case "CheckConf_dhcpd":
+			// Stages a fresh dhcpd.conf (fetched from srvcman) into
+			// rundir before the queued job (dhcpd -nf on that file)
+			// runs - see pfconfig.DhcpCreate.
+			if dherr := pfconfig.DhcpCreate(c.rundir, c.srvcurl, apitoken); dherr != nil {
+				log.Println(dherr)
+				if _, err := conn.Write([]byte("NOK")); err != nil {
+					log.Println(dherr)
+				}
+			}
+		case "CheckConf_unbound":
+			// Same as CheckConf_dhcpd, for unbound.conf.
+			if dnerr := pfconfig.DnsCreate(c.rundir, c.srvcurl, apitoken); dnerr != nil {
+				log.Println(dnerr)
+				if _, err := conn.Write([]byte("NOK")); err != nil {
+					log.Println(dnerr)
+				}
+			}
+		case "BackupConf_npppd":
+			// npppd has no config-validate mode, so srvcman's apply
+			// flow has no "check" step to piggyback the regen
+			// trigger on (unlike dhcpd/unbound) - this is the first
+			// command in its sequence instead, still ahead of the
+			// stage/restart steps that need the fresh file present.
+			if pperr := pfconfig.PppoeCreate(c.rundir, c.srvcurl, apitoken); pperr != nil {
+				log.Println(pperr)
+				if _, err := conn.Write([]byte("NOK")); err != nil {
+					log.Println(pperr)
+				}
+			}
+		case "ApplyIfaces":
+			// Fully self-contained: regenerates and applies
+			// hostname.<if>/mygate itself, so there's no separate
+			// job to queue afterward.
+			if _, aerr := pfconfig.ApplyIfaces(pfcfg.Router, c.rundir, c.srvcurl, apitoken); aerr != nil {
+				log.Println(aerr)
+				conn.Write([]byte("NOK"))
+			} else {
+				conn.Write([]byte("OK"))
+			}
+			conn.Close()
+			return
+		}
+		if Arkcommand.IsConcurrent(cmd.Name) {
+			// Read-only (ping/traceroute/netstat/ifconfig) - runs
+			// right here, in this connection's own goroutine,
+			// instead of behind the serialized worker queue. See
+			// Arkcommand.concurrentCommands for why.
+			runJob(cmd, conn)
+			return
+		}
+		jo := joborder{cmd: cmd, conn: conn}
+		job <- jo
+	}
+
+	// One accept loop per listener (Unix socket, mTLS TCP, or both), all
+	// feeding the same handleConn. errs carries whichever listener fails
+	// first (Accept only errors on real failure/shutdown, not per-command),
+	// which is treated the same as a fatal error from the old single-socket
+	// loop.
+	errs := make(chan error, len(sockets))
+	for _, sock := range sockets {
+		go func(sock net.Listener) {
+			for {
+				conn, err := sock.Accept()
+				if err != nil {
+					select {
+					case <-ctx.Done():
+						return
+					default:
+					}
+					errs <- err
+					return
+				}
+				go handleConn(conn)
+			}
+		}(sock)
+	}
+
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("Done running")
+	case err := <-errs:
+		return err
 	}
 }
 
@@ -306,6 +355,9 @@ func waitForSignal(cancel context.CancelFunc, ctx context.Context, c *config, si
 			switch s {
 			case syscall.SIGINT, syscall.SIGTERM:
 				log.Printf("Got SIGINT/SIGTERM, exiting.")
+				if c.sockfile != "" {
+					os.Remove(c.sockfile)
+				}
 				cancel()
 			case syscall.SIGHUP:
 				log.Println("SIGHUP received. Relaoding config.")
@@ -340,20 +392,44 @@ func main() {
 		}
 	}
 
+	var sockets []net.Listener
+
+	// Local Unix socket: same-host clients (srvcman/subsportal running on
+	// this box) can use this instead of provisioning TLS certs at all -
+	// trust here is filesystem permissions (gid arkgid, mode 0660), the
+	// same model this daemon used before mTLS existed. Set -socketfile ""
+	// to disable it for a remote-only deployment.
+	if c.sockfile != "" {
+		unixSock, err := net.Listen("unix", c.sockfile)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if err := os.Chown(c.sockfile, os.Getuid(), c.arkgid); err != nil {
+			log.Fatal(err)
+		}
+		if err := os.Chmod(c.sockfile, 0660); err != nil {
+			log.Fatal(err)
+		}
+		sockets = append(sockets, unixSock)
+		log.Println("IPC running (unix) on " + c.sockfile)
+	}
+
+	// Remote mTLS listener: for clients not on this host, where filesystem
+	// permissions can't gate access - see serverTLSConfig.
 	tlsConfig, err := serverTLSConfig(c.tlscert, c.tlskey, c.tlsclientca)
 	if err != nil {
 		log.Fatal(err)
 	}
-	socket, err := tls.Listen("tcp", c.listenaddr, tlsConfig)
+	tlsSock, err := tls.Listen("tcp", c.listenaddr, tlsConfig)
 	if err != nil {
 		log.Fatal(err)
 	}
+	sockets = append(sockets, tlsSock)
+	log.Println("IPC running (mTLS) on " + c.listenaddr)
 
 	//statCmd := Arkcommand.Arkcmd{Name: "systats", Cmd: c.rundir + "scripts/getstats.pl", Opts: nil}
 
 	//go srvclient.ExecScripts(&statCmd, "/tmp/mystats", 10)
-
-	log.Println("IPC running (mTLS) on " + c.listenaddr)
 
 	token, err := srvclient.GetToken(c.creds, c.srvcurl+"login")
 	apitoken = token
@@ -361,7 +437,7 @@ func main() {
 		log.Println(err)
 	}
 
-	if err := run(c, os.Stdout, socket, ctx); err != nil {
+	if err := run(c, os.Stdout, sockets, ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "%s\n", err)
 		os.Exit(1)
 	}

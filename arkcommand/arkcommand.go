@@ -64,6 +64,7 @@ var concurrentCommands = map[string]bool{
 	"ListInterfaces": true,
 	"ActiveRoutes":   true,
 	"SystemInfo":     true,
+	"TunnelPs":       true,
 }
 
 // IsConcurrent reports whether name is safe to run outside the serialized

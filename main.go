@@ -18,7 +18,6 @@ import (
 	Arkcommand "github.com/rbaylon/arkgated/arkcommand"
 	pfconfig "github.com/rbaylon/arkgated/config/pf"
 	"github.com/rbaylon/arkgated/config/webconf"
-	"github.com/rbaylon/arkgated/config/wizard"
 	"github.com/rbaylon/arkgated/srvclient"
 )
 
@@ -436,6 +435,54 @@ func openListeners(store *webconf.Store, ctx context.Context) ([]net.Listener, e
 	}
 }
 
+// awaitRouterConfig blocks until rundir/config.json exists and parses,
+// retrying whenever the configurator saves it. It replaces the interactive
+// stdin wizard that used to build this file (config/wizard): prompting on stdin
+// was never reachable for an rc.d-started daemon, and there is a web form for
+// it now.
+//
+// The gate is deliberately "loads", not "passes Validate". The form's
+// validation is stricter than the old wizard's prompts, so a config.json an
+// operator has been running for months could fail it (no interface marked
+// default, a DHCP scope naming an interface that no longer exists). Refusing to
+// start on that would be a regression, so those are logged as warnings and the
+// daemon carries on - exactly the behaviour before this change, where run()
+// only needed pfconfig.Init to succeed.
+//
+// Returns false only if ctx was cancelled while waiting.
+func awaitRouterConfig(store *webconf.Store, websrv *webconf.Server, ctx context.Context) bool {
+	warned := false
+	for {
+		// Captured before the attempt, so a save landing mid-check is not
+		// missed - same discipline as Store.Changed.
+		changed := websrv.RouterChanged()
+
+		path := store.Get().RunDir + "config.json"
+		cfg, found, err := webconf.LoadRouterConfig(path)
+		switch {
+		case err != nil:
+			log.Printf("Router config at %s is unusable: %v", path, err)
+		case !found:
+			log.Printf("No router config at %s yet - fill it in at /router in the web configurator.", path)
+		default:
+			if problems := cfg.Validate(); len(problems) > 0 && !warned {
+				log.Printf("Router config at %s loads but has %d problem(s); continuing anyway:", path, len(problems))
+				for _, w := range problems {
+					log.Printf("  - %s", w)
+				}
+				warned = true
+			}
+			return true
+		}
+
+		select {
+		case <-changed:
+		case <-ctx.Done():
+			return false
+		}
+	}
+}
+
 func waitForSignal(cancel context.CancelFunc, ctx context.Context, store *webconf.Store, sigchan chan os.Signal) {
 	for {
 		select {
@@ -520,13 +567,8 @@ func main() {
 		}
 	}
 
-	c := store.Get()
-
-	configPath := c.RunDir + "config.json"
-	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		if err := wizard.Run(configPath); err != nil {
-			log.Fatal(err)
-		}
+	if !awaitRouterConfig(store, websrv, ctx) {
+		return // ctx cancelled while waiting
 	}
 
 	sockets, err := openListeners(store, ctx)
@@ -537,7 +579,7 @@ func main() {
 		return // ctx cancelled while waiting for usable settings
 	}
 
-	c = store.Get()
+	c := store.Get()
 
 	//statCmd := Arkcommand.Arkcmd{Name: "systats", Cmd: c.RunDir + "scripts/getstats.pl", Opts: nil}
 

@@ -37,6 +37,12 @@ type Server struct {
 	// fingerprint shown on the page - an admin verifying a self-signed cert
 	// has nothing else to compare against.
 	cert certInfo
+
+	// routerSaved fires when the router config (rundir/config.json) is saved,
+	// so main can stop waiting for a file that did not exist yet. Settings
+	// have Store.Changed for the same job; the router config is not in the
+	// Store because pfconfig.Init owns that file and reads it from disk.
+	routerSaved *broadcaster
 }
 
 // NewServer returns a configurator for store. An empty password is refused
@@ -50,7 +56,7 @@ func NewServer(store *Store, user, pass string) (*Server, error) {
 	if pass == "" {
 		return nil, errors.New("web configurator admin password is required (-webpass or ARKGATED_WEBPASS)")
 	}
-	return &Server{store: store, user: user, pass: pass}, nil
+	return &Server{store: store, user: user, pass: pass, routerSaved: newBroadcaster()}, nil
 }
 
 // ListenAndServe serves the configurator over HTTPS until ctx is cancelled.
@@ -73,6 +79,7 @@ func (srv *Server) ListenAndServe(ctx context.Context) error {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", srv.auth(srv.handleIndex))
+	mux.HandleFunc("/router", srv.auth(srv.handleRouter))
 
 	hs := &http.Server{
 		Addr:              cur.WebAddr,
@@ -346,7 +353,10 @@ body {
 }
 .wrap { max-width: 860px; margin: 0 auto; padding: 32px 16px 64px; }
 h1 { font-size: 22px; margin: 0 0 4px; }
-.sub { color: var(--muted); font-size: 13px; margin: 0 0 24px; }
+.sub { color: var(--muted); font-size: 13px; margin: 0 0 16px; }
+nav { margin: 0 0 24px; font-size: 14px; }
+nav a { color: var(--accent); text-decoration: none; margin-right: 16px; }
+nav a.here { color: var(--ink); font-weight: 600; }
 .sub code { font-size: 12px; }
 section {
   background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
@@ -389,6 +399,7 @@ footer { color: var(--muted); font-size: 12px; margin-top: 24px; }
 <div class="wrap">
   <h1>arkgated configurator</h1>
   <p class="sub">Every setting below used to be a command-line flag. Saved to <code>{{.SettingsPath}}</code> (mode 0600).</p>
+  <nav><a class="here" href="/">Daemon settings</a><a href="/router">Router config</a></nav>
 
   {{if not .Configured}}
   <div class="note warn"><strong>Not configured yet.</strong> arkgated is holding off on opening its IPC listeners until these settings are saved once.</div>

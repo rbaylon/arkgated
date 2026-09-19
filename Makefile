@@ -19,7 +19,6 @@ dist:
 	make install
 	install -m 755 ${app} ${distdir}/
 	install systemfiles/rc.arkgated ${distdir}/
-	install systemfiles/sysctl.conf ${distdir}/
 	cd ${distdir}
 	cd ..
 	tar -czvf ${app}.tar.gz ${app}

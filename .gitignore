@@ -31,3 +31,9 @@ sample.config
 tags
 CLAUDE.md
 .claude
+settings.json
+settings.json.new
+app.config
+*.crt
+*.key
+*.pem

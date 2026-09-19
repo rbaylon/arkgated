@@ -17,21 +17,18 @@ import (
 	"github.com/namsral/flag"
 	Arkcommand "github.com/rbaylon/arkgated/arkcommand"
 	pfconfig "github.com/rbaylon/arkgated/config/pf"
+	"github.com/rbaylon/arkgated/config/webconf"
 	"github.com/rbaylon/arkgated/config/wizard"
 	"github.com/rbaylon/arkgated/srvclient"
 )
 
-type config struct {
-	sockfile    string
-	arkgid      int
-	maxbuff     int
-	srvcurl     string
-	listenaddr  string
-	tlscert     string
-	tlskey      string
-	tlsclientca string
-	rundir      string
-	creds       string
+// webcreds is everything arkgated still takes on the command line. Every
+// other setting moved into the web configurator (config/webconf), which
+// persists them at webconf.Path - these two can't live there too, because
+// they are what guards access to it.
+type webcreds struct {
+	admin string
+	pass  string
 }
 
 type joborder struct {
@@ -39,38 +36,23 @@ type joborder struct {
 	conn net.Conn
 }
 
-func (c *config) init(args []string) error {
-	flags := flag.NewFlagSet(args[0], flag.ExitOnError)
-	flags.String(flag.DefaultConfigFlagname, "", "Path to config file")
+// parseFlags reads the configurator credentials. Both are also settable as
+// ARKGATED_WEBADMIN/ARKGATED_WEBPASS or in a -config file (namsral/flag), and
+// one of those is the right way to supply the password in production - a
+// -webpass on the command line is visible to every user via ps.
+func parseFlags(args []string) (webcreds, error) {
+	flags := flag.NewFlagSetWithEnvPrefix(args[0], "ARKGATED", flag.ExitOnError)
+	flags.String(flag.DefaultConfigFlagname, "", "Path to a file holding webadmin/webpass (every other setting lives in the web configurator)")
 
 	var (
-		sockfile    = flags.String("socketfile", "/tmp/arkgated.sock", "Path to the local Unix domain socket for same-host clients (srvcman/subsportal running on this box); empty disables it")
-		arkgid      = flags.Int("arkgid", 1001, "arkgate group id - owns the Unix socket (mode 0660)")
-		maxbuff     = flags.Int("maxbuff", 1024, "Max buffer size")
-		srvcurl     = flags.String("srvcurl", "http://127.0.0.1/api/v1/", "Service manager url")
-		listenaddr  = flags.String("listenaddr", "0.0.0.0:8443", "Network address to listen for IPC commands on")
-		tlscert     = flags.String("tlscert", "./rundir/arkgated.crt", "Path to this daemon's TLS server certificate")
-		tlskey      = flags.String("tlskey", "./rundir/arkgated.key", "Path to this daemon's TLS server private key")
-		tlsclientca = flags.String("tlsclientca", "./rundir/ca.crt", "Path to the CA certificate used to verify client (srvcman) certificates")
-		rundir      = flags.String("rundir", "./rundir/", "Path to rundir")
-		creds       = flags.String("creds", "./rundir/", "Basic auth api creds")
+		webadmin = flags.String("webadmin", "arkadmin", "Web configurator admin username")
+		webpass  = flags.String("webpass", "", "Web configurator admin password - required; prefer ARKGATED_WEBPASS or a -config file over the command line, which ps exposes")
 	)
 
 	if err := flags.Parse(args[1:]); err != nil {
-		return err
+		return webcreds{}, err
 	}
-
-	c.sockfile = *sockfile
-	c.arkgid = *arkgid
-	c.maxbuff = *maxbuff
-	c.srvcurl = *srvcurl
-	c.listenaddr = *listenaddr
-	c.tlscert = *tlscert
-	c.tlskey = *tlskey
-	c.tlsclientca = *tlsclientca
-	c.rundir = *rundir
-	c.creds = *creds
-	return nil
+	return webcreds{admin: *webadmin, pass: *webpass}, nil
 }
 
 // serverTLSConfig builds the mutual-TLS config for the IPC listener:
@@ -101,14 +83,20 @@ func serverTLSConfig(certfile, keyfile, clientcafile string) (*tls.Config, error
 	}, nil
 }
 
-func refreshToken(c *config) *string {
+func refreshToken(store *webconf.Store) *string {
+	// Read a fresh snapshot every tick rather than closing over one: the web
+	// configurator can change creds/srvcurl underneath us, and picking the
+	// new values up here is how a corrected credential starts working
+	// without a restart.
+	c := store.Get()
+
 	// apitoken is nil whenever the last login attempt failed (e.g. srvcman
 	// unreachable at startup, now a real possibility since it can run on a
-	// separate host) - retry here on every accept-loop tick instead of
-	// dereferencing a nil token, so arkgated self-heals once srvcman comes
-	// back instead of staying permanently stuck.
+	// separate host) - retry here on every tick instead of dereferencing a
+	// nil token, so arkgated self-heals once srvcman comes back instead of
+	// staying permanently stuck.
 	if apitoken == nil {
-		token, err := srvclient.GetToken(c.creds, c.srvcurl+"login")
+		token, err := srvclient.GetToken(c.Creds, c.SrvcURL+"login")
 		if err != nil {
 			log.Println("refreshToken:", err)
 			return nil
@@ -121,7 +109,7 @@ func refreshToken(c *config) *string {
 		log.Println(err)
 	}
 	if expired {
-		token, err := srvclient.GetToken(c.creds, c.srvcurl+"login")
+		token, err := srvclient.GetToken(c.Creds, c.SrvcURL+"login")
 		if err != nil {
 			return nil
 		}
@@ -191,11 +179,11 @@ func worker(job <-chan joborder, ctx context.Context) {
 // single Accept() to hang it off, so it's its own loop instead. Checks
 // immediately on start (in case apitoken is already nil, e.g. the initial
 // login at startup failed) rather than waiting out the first tick.
-func refreshTokenLoop(c *config, ctx context.Context) {
+func refreshTokenLoop(store *webconf.Store, ctx context.Context) {
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
 	for {
-		if newtoken := refreshToken(c); newtoken != nil {
+		if newtoken := refreshToken(store); newtoken != nil {
 			apitoken = newtoken
 		}
 		select {
@@ -206,9 +194,16 @@ func refreshTokenLoop(c *config, ctx context.Context) {
 	}
 }
 
-func run(c *config, out io.Writer, sockets []net.Listener, ctx context.Context) error {
+func run(store *webconf.Store, out io.Writer, sockets []net.Listener, ctx context.Context) error {
 	log.SetOutput(out)
-	pfcfg, err := pfconfig.Init(c.rundir + "config.json")
+
+	// rundir is read once, here: pfcfg (and so pfcfg.Router, used by every
+	// CheckPF/ApplyIfaces below) comes out of rundir+config.json, so
+	// re-pointing rundir from the configurator needs a restart - which is
+	// what the configurator marks it as.
+	rundir := store.Get().RunDir
+
+	pfcfg, err := pfconfig.Init(rundir + "config.json")
 	if err != nil {
 		// pfcfg is nil here - every use below (and every CheckPF/ApplyIfaces
 		// command for the rest of the process's life, via this same pfcfg
@@ -218,22 +213,28 @@ func run(c *config, out io.Writer, sockets []net.Listener, ctx context.Context) 
 		return fmt.Errorf("reading json config: %w", err)
 	}
 
-	if err := srvclient.Enroll(c.srvcurl, apitoken, pfcfg); err != nil {
+	srvcurl := store.Get().SrvcURL
+	if err := srvclient.Enroll(srvcurl, apitoken, pfcfg); err != nil {
 		log.Println("Error enrolling router: ", err)
 	}
 
-	if err := pfconfig.PfCreate(pfcfg.Router, c.rundir, c.srvcurl, apitoken); err != nil {
+	if err := pfconfig.PfCreate(pfcfg.Router, rundir, srvcurl, apitoken); err != nil {
 		log.Println("Error creating pf config file: ", err)
 	}
 	job := make(chan joborder, 10)
 	go worker(job, ctx)
-	go refreshTokenLoop(c, ctx)
+	go refreshTokenLoop(store, ctx)
 
 	// handleConn is shared by every listener's accept loop below - a
 	// command means the same thing regardless of whether it arrived over
 	// the local Unix socket or the remote mTLS listener.
 	handleConn := func(conn net.Conn) {
-		buf := make([]byte, c.maxbuff)
+		// Snapshot per connection rather than per process, so maxbuff and
+		// srvcurl edits made in the web configurator take effect on the
+		// next command instead of only after a restart.
+		c := store.Get()
+
+		buf := make([]byte, c.MaxBuff)
 		n, err := conn.Read(buf)
 		if err != nil {
 			log.Println(err)
@@ -255,7 +256,7 @@ func run(c *config, out io.Writer, sockets []net.Listener, ctx context.Context) 
 			// Refreshes pf.conf plus every hostname.<if>/mygate/
 			// resolv.conf file in rundir from live data before the
 			// queued job (pfctl -nf on the file just written) runs.
-			if pferr := pfconfig.PfCreate(pfcfg.Router, c.rundir, c.srvcurl, apitoken); pferr != nil {
+			if pferr := pfconfig.PfCreate(pfcfg.Router, rundir, c.SrvcURL, apitoken); pferr != nil {
 				log.Println(pferr)
 				if _, err := conn.Write([]byte("NOK")); err != nil {
 					log.Println(pferr)
@@ -265,7 +266,7 @@ func run(c *config, out io.Writer, sockets []net.Listener, ctx context.Context) 
 			// Stages a fresh dhcpd.conf (fetched from srvcman) into
 			// rundir before the queued job (dhcpd -nf on that file)
 			// runs - see pfconfig.DhcpCreate.
-			if dherr := pfconfig.DhcpCreate(c.rundir, c.srvcurl, apitoken); dherr != nil {
+			if dherr := pfconfig.DhcpCreate(rundir, c.SrvcURL, apitoken); dherr != nil {
 				log.Println(dherr)
 				if _, err := conn.Write([]byte("NOK")); err != nil {
 					log.Println(dherr)
@@ -273,7 +274,7 @@ func run(c *config, out io.Writer, sockets []net.Listener, ctx context.Context) 
 			}
 		case "CheckConf_unbound":
 			// Same as CheckConf_dhcpd, for unbound.conf.
-			if dnerr := pfconfig.DnsCreate(c.rundir, c.srvcurl, apitoken); dnerr != nil {
+			if dnerr := pfconfig.DnsCreate(rundir, c.SrvcURL, apitoken); dnerr != nil {
 				log.Println(dnerr)
 				if _, err := conn.Write([]byte("NOK")); err != nil {
 					log.Println(dnerr)
@@ -285,7 +286,7 @@ func run(c *config, out io.Writer, sockets []net.Listener, ctx context.Context) 
 			// trigger on (unlike dhcpd/unbound) - this is the first
 			// command in its sequence instead, still ahead of the
 			// stage/restart steps that need the fresh file present.
-			if pperr := pfconfig.PppoeCreate(c.rundir, c.srvcurl, apitoken); pperr != nil {
+			if pperr := pfconfig.PppoeCreate(rundir, c.SrvcURL, apitoken); pperr != nil {
 				log.Println(pperr)
 				if _, err := conn.Write([]byte("NOK")); err != nil {
 					log.Println(pperr)
@@ -295,7 +296,7 @@ func run(c *config, out io.Writer, sockets []net.Listener, ctx context.Context) 
 			// Fully self-contained: regenerates and applies
 			// hostname.<if>/mygate itself, so there's no separate
 			// job to queue afterward.
-			if _, aerr := pfconfig.ApplyIfaces(pfcfg.Router, c.rundir, c.srvcurl, apitoken); aerr != nil {
+			if _, aerr := pfconfig.ApplyIfaces(pfcfg.Router, rundir, c.SrvcURL, apitoken); aerr != nil {
 				log.Println(aerr)
 				conn.Write([]byte("NOK"))
 			} else {
@@ -348,20 +349,113 @@ func run(c *config, out io.Writer, sockets []net.Listener, ctx context.Context) 
 	}
 }
 
-func waitForSignal(cancel context.CancelFunc, ctx context.Context, c *config, sigchan chan os.Signal) {
+// bindListeners opens the IPC transports for one settings snapshot. Anything
+// it managed to open before failing is closed again, so a retry does not leak
+// a half-bound socket or leave a stale Unix socket file behind.
+func bindListeners(c webconf.Settings) ([]net.Listener, error) {
+	var sockets []net.Listener
+	fail := func(err error) ([]net.Listener, error) {
+		for _, s := range sockets {
+			s.Close()
+		}
+		if c.SocketFile != "" {
+			os.Remove(c.SocketFile)
+		}
+		return nil, err
+	}
+
+	// Local Unix socket: same-host clients (srvcman/subsportal running on
+	// this box) can use this instead of provisioning TLS certs at all - trust
+	// here is filesystem permissions (gid arkgid, mode 0660), the same model
+	// this daemon used before mTLS existed. Clear the socket path in the
+	// configurator to disable it for a remote-only deployment.
+	if c.SocketFile != "" {
+		unixSock, err := net.Listen("unix", c.SocketFile)
+		if err != nil {
+			return fail(err)
+		}
+		sockets = append(sockets, unixSock)
+		if err := os.Chown(c.SocketFile, os.Getuid(), c.ArkGid); err != nil {
+			return fail(err)
+		}
+		if err := os.Chmod(c.SocketFile, 0660); err != nil {
+			return fail(err)
+		}
+		log.Println("IPC running (unix) on " + c.SocketFile)
+	}
+
+	// Remote mTLS listener: for clients not on this host, where filesystem
+	// permissions can't gate access - see serverTLSConfig. Its cert/key are
+	// unrelated to the configurator's own pair; only srvcman authenticates
+	// against these.
+	tlsConfig, err := serverTLSConfig(c.TLSCert, c.TLSKey, c.TLSClientCA)
+	if err != nil {
+		return fail(err)
+	}
+	tlsSock, err := tls.Listen("tcp", c.ListenAddr, tlsConfig)
+	if err != nil {
+		return fail(err)
+	}
+	sockets = append(sockets, tlsSock)
+	log.Println("IPC running (mTLS) on " + c.ListenAddr)
+
+	return sockets, nil
+}
+
+// openListeners keeps trying bindListeners across settings changes, instead of
+// exiting on the first failure.
+//
+// This matters because the configurator is now the only way to edit a setting.
+// A wrong tlscert path, a port already in use or a bad arkgid used to be fixed
+// by editing flags or app.config and restarting; now the fix lives in a web UI
+// that a log.Fatal here would kill before it ever bound - locking the operator
+// out of the one tool that could correct the value. So the daemon stays up,
+// says what is wrong, and retries each time the settings are saved.
+//
+// It returns (nil, nil) if ctx is cancelled while waiting, and only ever
+// returns an error for something no edit could fix.
+func openListeners(store *webconf.Store, ctx context.Context) ([]net.Listener, error) {
+	for {
+		// Captured before the attempt, so a save that lands mid-attempt
+		// still wakes the select below rather than being missed.
+		changed := store.Changed()
+
+		sockets, err := bindListeners(store.Get())
+		if err == nil {
+			return sockets, nil
+		}
+
+		log.Printf("Cannot open IPC listeners: %v", err)
+		log.Printf("Fix the affected setting in the web configurator - retrying when it is saved.")
+
+		select {
+		case <-changed:
+		case <-ctx.Done():
+			return nil, nil
+		}
+	}
+}
+
+func waitForSignal(cancel context.CancelFunc, ctx context.Context, store *webconf.Store, sigchan chan os.Signal) {
 	for {
 		select {
 		case s := <-sigchan:
 			switch s {
 			case syscall.SIGINT, syscall.SIGTERM:
 				log.Printf("Got SIGINT/SIGTERM, exiting.")
-				if c.sockfile != "" {
-					os.Remove(c.sockfile)
+				if sf := store.Get().SocketFile; sf != "" {
+					os.Remove(sf)
 				}
 				cancel()
 			case syscall.SIGHUP:
-				log.Println("SIGHUP received. Relaoding config.")
-				c.init(os.Args)
+				// Same job the old flag re-parse did, against the
+				// settings file the configurator writes: it updates what
+				// later reads see, it does not re-open listeners or
+				// rebuild the TLS config.
+				log.Println("SIGHUP received. Reloading config.")
+				if err := store.Reload(); err != nil {
+					log.Println("Reload failed, keeping current settings:", err)
+				}
 			}
 		case <-ctx.Done():
 			log.Printf("Context Done.")
@@ -379,65 +473,83 @@ func main() {
 	signalChan := make(chan os.Signal, 1)
 	signal.Notify(signalChan, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 
-	c := &config{}
+	creds, err := parseFlags(os.Args)
+	if err != nil {
+		log.Fatal(err)
+	}
 
-	go waitForSignal(cancel, ctx, c, signalChan)
+	store, err := webconf.Open(webconf.Path)
+	if err != nil {
+		log.Fatal(err)
+	}
 
-	c.init(os.Args)
+	websrv, err := webconf.NewServer(store, creds.admin, creds.pass)
+	if err != nil {
+		log.Fatal(err)
+	}
 
-	configPath := c.rundir + "config.json"
+	go waitForSignal(cancel, ctx, store, signalChan)
+
+	// The configurator comes up first and stays up: it is the only way to
+	// set anything now that the flags are gone, so it has to be reachable
+	// both before the daemon has usable settings and after, for edits.
+	go func() {
+		err := websrv.ListenAndServe(ctx)
+		if err == nil {
+			return
+		}
+		if !store.Configured() {
+			// main is blocked on store.Ready() and the only thing that can
+			// unblock it just died, so nothing will ever proceed. Exiting
+			// beats hanging silently.
+			log.Fatal("web configurator: ", err)
+		}
+		// Already configured, so the IPC transports are serving real work.
+		// Losing the admin UI is bad but not worth taking a working router
+		// daemon down for - complain and carry on.
+		log.Printf("web configurator stopped: %v (settings can still be edited in %s and picked up with SIGHUP)", err, store.Path())
+	}()
+
+	if !store.Configured() {
+		log.Printf("No usable settings in %s yet - open the web configurator and save them.", store.Path())
+		select {
+		case <-store.Ready():
+			log.Println("Settings saved, continuing startup.")
+		case <-ctx.Done():
+			return
+		}
+	}
+
+	c := store.Get()
+
+	configPath := c.RunDir + "config.json"
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
 		if err := wizard.Run(configPath); err != nil {
 			log.Fatal(err)
 		}
 	}
 
-	var sockets []net.Listener
-
-	// Local Unix socket: same-host clients (srvcman/subsportal running on
-	// this box) can use this instead of provisioning TLS certs at all -
-	// trust here is filesystem permissions (gid arkgid, mode 0660), the
-	// same model this daemon used before mTLS existed. Set -socketfile ""
-	// to disable it for a remote-only deployment.
-	if c.sockfile != "" {
-		unixSock, err := net.Listen("unix", c.sockfile)
-		if err != nil {
-			log.Fatal(err)
-		}
-		if err := os.Chown(c.sockfile, os.Getuid(), c.arkgid); err != nil {
-			log.Fatal(err)
-		}
-		if err := os.Chmod(c.sockfile, 0660); err != nil {
-			log.Fatal(err)
-		}
-		sockets = append(sockets, unixSock)
-		log.Println("IPC running (unix) on " + c.sockfile)
-	}
-
-	// Remote mTLS listener: for clients not on this host, where filesystem
-	// permissions can't gate access - see serverTLSConfig.
-	tlsConfig, err := serverTLSConfig(c.tlscert, c.tlskey, c.tlsclientca)
+	sockets, err := openListeners(store, ctx)
 	if err != nil {
 		log.Fatal(err)
 	}
-	tlsSock, err := tls.Listen("tcp", c.listenaddr, tlsConfig)
-	if err != nil {
-		log.Fatal(err)
+	if sockets == nil {
+		return // ctx cancelled while waiting for usable settings
 	}
-	sockets = append(sockets, tlsSock)
-	log.Println("IPC running (mTLS) on " + c.listenaddr)
 
-	//statCmd := Arkcommand.Arkcmd{Name: "systats", Cmd: c.rundir + "scripts/getstats.pl", Opts: nil}
+	c = store.Get()
+
+	//statCmd := Arkcommand.Arkcmd{Name: "systats", Cmd: c.RunDir + "scripts/getstats.pl", Opts: nil}
 
 	//go srvclient.ExecScripts(&statCmd, "/tmp/mystats", 10)
 
-	token, err := srvclient.GetToken(c.creds, c.srvcurl+"login")
+	token, err := srvclient.GetToken(c.Creds, c.SrvcURL+"login")
 	apitoken = token
 	if err != nil {
 		log.Println(err)
 	}
 
-	if err := run(c, os.Stdout, sockets, ctx); err != nil {
+	if err := run(store, os.Stdout, sockets, ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "%s\n", err)
 		os.Exit(1)
 	}

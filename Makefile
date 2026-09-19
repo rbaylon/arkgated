@@ -14,8 +14,6 @@ install:
 	mkdir -p ${distdir}
 	install -m 755 ${app} /usr/local/sbin/
 	cp -r rundir ${distdir}/
-	install app.config ${distdir}/
-	install -m 755 configure.sh ${distdir}/
 
 dist:
 	make install

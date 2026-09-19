@@ -98,13 +98,22 @@ func fields() []field {
 			set:   func(s *Settings, v string) error { s.SrvcURL = v; return nil },
 		},
 		{
-			Key:   "creds",
-			Label: "Basic auth api creds",
-			Help:  "Credential arkgated logs in to srvcman with. Stored in the settings file (mode 0600); leave the field blank to keep the saved value.",
+			Key:   "apiuser",
+			Label: "API username",
+			Help:  "The srvcman account arkgated logs in as. Sent as HTTP Basic auth; you enter it plainly and the daemon does the encoding.",
+			Group: groupAPI,
+			Kind:  kindText,
+			get:   func(s *Settings) string { return s.APIUser },
+			set:   func(s *Settings, v string) error { s.APIUser = v; return nil },
+		},
+		{
+			Key:   "apipassword",
+			Label: "API password",
+			Help:  "Password for that account. Stored as-is in the settings file (mode 0600) because Basic auth has to send it; leave blank to keep the saved value.",
 			Group: groupAPI,
 			Kind:  kindSecret,
-			get:   func(s *Settings) string { return s.Creds },
-			set:   func(s *Settings, v string) error { s.Creds = v; return nil },
+			get:   func(s *Settings) string { return s.APIPassword },
+			set:   func(s *Settings, v string) error { s.APIPassword = v; return nil },
 		},
 
 		{

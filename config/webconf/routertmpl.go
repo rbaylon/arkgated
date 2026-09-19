@@ -68,6 +68,11 @@ td.mono, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, mon
 }
 .pill.off { background: var(--warn-bg); color: var(--warn-ink); }
 .pill.pseudo { background: var(--line); color: var(--muted); }
+.opt {
+  font-size: 11px; font-weight: 600; text-transform: none; letter-spacing: 0;
+  padding: 1px 7px; border-radius: 999px; background: var(--line); color: var(--muted);
+  margin-left: 6px; vertical-align: 1px;
+}
 .note { border-radius: 8px; padding: 12px 14px; margin-bottom: 16px; font-size: 14px; }
 .note ul { margin: 6px 0 0; padding-left: 20px; }
 .note.err { background: var(--err-bg); color: var(--err-ink); }
@@ -219,8 +224,8 @@ footer { color: var(--muted); font-size: 12px; margin-top: 24px; }
     </section>
 
     <section>
-      <h2>DHCP scopes</h2>
-      <p class="hint">Clear a row's interface, subnet and range to delete it. The interface is one of the names above.</p>
+      <h2>DHCP scopes <span class="opt">optional</span></h2>
+      <p class="hint">Only used to seed srvcman when this router first enrolls &mdash; srvcman's dhcp module owns <code class="mono">dhcpd.conf</code> after that, and arkgated just fetches the rendered text from it. Leave this empty and manage scopes in srvcman. Nothing here is required; whatever you do fill in is only checked for typos. Clear a row's interface, subnet and range to delete it.</p>
       {{range .Dhcps}}
       <div class="row">
         <h3>Scope {{.Idx}}</h3>
@@ -255,8 +260,8 @@ footer { color: var(--muted); font-size: 12px; margin-top: 24px; }
     </section>
 
     <section>
-      <h2>pflow exports</h2>
-      <p class="hint">NetFlow/pflow export. Clear a row's device and destination to delete it.</p>
+      <h2>pflow exports <span class="opt">optional</span></h2>
+      <p class="hint">NetFlow/pflow export. Leave empty if you do not use it. Unlike DHCP, a row you <em>do</em> add must be complete: each one is written to <code class="mono">hostname.&lt;device&gt;</code> as <code class="mono">flowsrc</code>/<code class="mono">flowdst</code>/<code class="mono">pflowproto</code>, and a missing value there produces an interface file that breaks <code class="mono">netstart</code>. Clear a row's device and destination to delete it.</p>
       {{range .Pflows}}
       <div class="row">
         <h3>Export {{.Idx}}</h3>

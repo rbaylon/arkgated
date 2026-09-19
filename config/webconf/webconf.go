@@ -12,8 +12,10 @@
 package webconf
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net"
 	"net/url"
 	"os"
@@ -39,10 +41,42 @@ type Settings struct {
 	TLSKey      string `json:"tlskey"`
 	TLSClientCA string `json:"tlsclientca"`
 	RunDir      string `json:"rundir"`
-	Creds       string `json:"creds"`
+	APIUser     string `json:"apiuser"`
+	APIPassword string `json:"apipassword"`
 	WebAddr     string `json:"webaddr"`
 	WebCert     string `json:"webcert"`
 	WebKey      string `json:"webkey"`
+
+	// Creds is the pre-split form of APIUser/APIPassword: one base64
+	// "user:password" string, passed verbatim after "Basic ". It is only read,
+	// never written - Open migrates it into the two fields above and clears it,
+	// so an existing settings.json keeps working across the change. Once no
+	// deployment has one of these left, this field can go.
+	Creds string `json:"creds,omitempty"`
+}
+
+// migrateLegacyCreds moves a pre-split base64 "creds" value into APIUser and
+// APIPassword, and reports whether it did. Anything that will not decode into
+// "user:password" is dropped rather than carried forward: the old -creds flag
+// defaulted to "./rundir/", which was never a valid Basic value, so a garbage
+// value here is expected and should surface as "API username is required"
+// rather than as a silent 401 from srvcman later.
+func (s *Settings) migrateLegacyCreds() (migrated bool, hadGarbage bool) {
+	legacy := s.Creds
+	s.Creds = ""
+	if legacy == "" || s.APIUser != "" || s.APIPassword != "" {
+		return false, false
+	}
+	raw, err := base64.StdEncoding.DecodeString(legacy)
+	if err != nil {
+		return false, true
+	}
+	user, pass, ok := strings.Cut(string(raw), ":")
+	if !ok {
+		return false, true
+	}
+	s.APIUser, s.APIPassword = user, pass
+	return true, false
 }
 
 // Defaults are the values the removed flags defaulted to, so an operator who
@@ -82,7 +116,6 @@ func Defaults() Settings {
 		TLSKey:      "./rundir/arkgated.key",
 		TLSClientCA: "./rundir/ca.crt",
 		RunDir:      "./rundir/",
-		Creds:       "./rundir/",
 		WebAddr:     "0.0.0.0:1443",
 		WebCert:     filepath.Join(filepath.Dir(Path), "webconf.crt"),
 		WebKey:      filepath.Join(filepath.Dir(Path), "webconf.key"),
@@ -103,7 +136,7 @@ func (s *Settings) Normalize() {
 	s.TLSKey = strings.TrimSpace(s.TLSKey)
 	s.TLSClientCA = strings.TrimSpace(s.TLSClientCA)
 	s.RunDir = strings.TrimSpace(s.RunDir)
-	s.Creds = strings.TrimSpace(s.Creds)
+	s.APIUser = strings.TrimSpace(s.APIUser)
 	s.WebAddr = strings.TrimSpace(s.WebAddr)
 	s.WebCert = strings.TrimSpace(s.WebCert)
 	s.WebKey = strings.TrimSpace(s.WebKey)
@@ -132,8 +165,14 @@ func (s *Settings) Validate() []string {
 		errs = append(errs, "Service manager url is missing a host")
 	}
 
-	if s.Creds == "" {
-		errs = append(errs, "Basic auth api creds is required - without it arkgated can never log in to srvcman")
+	// Both halves are needed: srvcman's login is HTTP Basic, and arkgated can
+	// do nothing at all (no enroll, no GetSubs, no config generation) without a
+	// token.
+	if s.APIUser == "" {
+		errs = append(errs, "API username is required - without it arkgated can never log in to srvcman")
+	}
+	if s.APIPassword == "" {
+		errs = append(errs, "API password is required - without it arkgated can never log in to srvcman")
 	}
 
 	// The mTLS listener is not optional: main.go has always treated a
@@ -263,6 +302,11 @@ func Open(path string) (*Store, error) {
 	if err := json.Unmarshal(b, &cur); err != nil {
 		return nil, fmt.Errorf("parsing %s: %w", path, err)
 	}
+	if migrated, garbage := cur.migrateLegacyCreds(); migrated {
+		log.Printf("Migrated the legacy base64 %q setting into apiuser/apipassword; it will be written in the new form on the next save.", "creds")
+	} else if garbage {
+		log.Printf("Ignoring a legacy %q setting that is not base64 \"user:password\" - set the API username and password in the web configurator.", "creds")
+	}
 	cur.Normalize()
 	if errs := cur.Validate(); len(errs) > 0 {
 		// Keep the bad values so the form shows what needs fixing, but
@@ -378,6 +422,7 @@ func (s *Store) Reload() error {
 	if err := json.Unmarshal(b, &cur); err != nil {
 		return fmt.Errorf("parsing %s: %w", s.path, err)
 	}
+	cur.migrateLegacyCreds()
 	cur.Normalize()
 	if errs := cur.Validate(); len(errs) > 0 {
 		return fmt.Errorf("%s is not usable: %s", s.path, strings.Join(errs, "; "))

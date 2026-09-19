@@ -147,6 +147,9 @@ func (c *RouterConfig) Normalize() {
 //     defaults means no default route and several means last-one-wins;
 //   - a DHCP scope's "type" is an interface *name* reference, which the wizard
 //     accepted as free text and got wrong silently.
+//
+// Interfaces are the only required section. DHCP scopes and pflow exports are
+// both optional, for different reasons - see the comments on each loop below.
 func (c *RouterConfig) Validate() []string {
 	var errs []string
 
@@ -241,24 +244,25 @@ func (c *RouterConfig) Validate() []string {
 		errs = append(errs, fmt.Sprintf("%d interfaces are marked default; only one can be", defaults))
 	}
 
+	// DHCP scopes are optional, and nothing inside a row is required either.
+	// arkgated never reads Dhcps: it is purely part of the enrollment payload,
+	// and srvcman's dhcp module owns dhcpd.conf from then on (arkgated fetches
+	// the rendered text from /dhcpserver/conf - see pfconfig.DhcpCreate). So
+	// these rules only catch typos in whatever the operator did fill in; they
+	// do not insist on a complete scope, because srvcman is the thing that
+	// decides what a complete scope is.
 	for n, d := range c.Dhcps {
 		label := d.Type
 		if label == "" {
 			label = fmt.Sprintf("DHCP scope %d", n+1)
 		}
-		if d.Type == "" {
-			errs = append(errs, fmt.Sprintf("%s: the interface it applies to is required", label))
-		} else if !names[d.Type] {
+		if d.Type != "" && !names[d.Type] {
 			errs = append(errs, fmt.Sprintf("%s: no interface is named %q", label, d.Type))
 		}
-		if d.Subnet == "" {
-			errs = append(errs, fmt.Sprintf("%s: subnet is required", label))
-		} else if net.ParseIP(d.Subnet) == nil {
+		if d.Subnet != "" && net.ParseIP(d.Subnet) == nil {
 			errs = append(errs, fmt.Sprintf("%s: subnet %q is not an IP address", label, d.Subnet))
 		}
-		if d.Netmask == "" {
-			errs = append(errs, fmt.Sprintf("%s: netmask is required", label))
-		} else if !validDottedMask(d.Netmask) {
+		if d.Netmask != "" && !validDottedMask(d.Netmask) {
 			errs = append(errs, fmt.Sprintf("%s: netmask %q is not a valid dotted netmask", label, d.Netmask))
 		}
 		if d.Routers != "" && net.ParseIP(d.Routers) == nil {
@@ -267,11 +271,11 @@ func (c *RouterConfig) Validate() []string {
 		if d.Dnsservers != "" && net.ParseIP(d.Dnsservers) == nil {
 			errs = append(errs, fmt.Sprintf("%s: DNS server %q is not an IP address", label, d.Dnsservers))
 		}
-		// dhcpd wants "range <low> <high>".
-		parts := strings.Fields(d.Range)
-		if len(parts) != 2 {
-			errs = append(errs, fmt.Sprintf("%s: range must be two addresses, low then high (e.g. 172.16.1.1 172.16.9.255)", label))
-		} else {
+		// dhcpd wants "range <low> <high>", so check the shape if one is given.
+		if parts := strings.Fields(d.Range); len(parts) > 0 {
+			if len(parts) != 2 {
+				errs = append(errs, fmt.Sprintf("%s: range must be two addresses, low then high (e.g. 172.16.1.1 172.16.9.255)", label))
+			}
 			for _, p := range parts {
 				if net.ParseIP(p) == nil {
 					errs = append(errs, fmt.Sprintf("%s: range address %q is not an IP address", label, p))
@@ -280,15 +284,23 @@ func (c *RouterConfig) Validate() []string {
 		}
 	}
 
+	// pflow exports are optional too, but a row that exists is *not* relaxed
+	// the way a DHCP row is, because this one is consumed locally: ConfigCreate
+	// writes rundir/hostname.<device> containing "flowsrc <src> flowdst <dst>"
+	// and "pflowproto <n>". A row missing any of those produces a malformed
+	// hostname.if file, which breaks netstart for that interface - so if you
+	// add an export, it has to be complete.
 	for n, p := range c.Pflows {
 		label := p.Device
 		if label == "" {
 			label = fmt.Sprintf("pflow export %d", n+1)
 		}
 		if p.Device == "" {
-			errs = append(errs, fmt.Sprintf("%s: pflow device is required", label))
+			errs = append(errs, fmt.Sprintf("%s: pflow device is required - it names the hostname.if file this export is written to", label))
 		}
-		if p.Src != "" && net.ParseIP(p.Src) == nil {
+		if p.Src == "" {
+			errs = append(errs, fmt.Sprintf("%s: flow source is required (it becomes flowsrc in hostname.%s)", label, p.Device))
+		} else if net.ParseIP(p.Src) == nil {
 			errs = append(errs, fmt.Sprintf("%s: flow source %q is not an IP address", label, p.Src))
 		}
 		if p.Dst == "" {
@@ -296,7 +308,7 @@ func (c *RouterConfig) Validate() []string {
 		} else if _, _, err := net.SplitHostPort(p.Dst); err != nil {
 			errs = append(errs, fmt.Sprintf("%s: flow destination must be host:port: %v", label, err))
 		}
-		// npppd/pflow speak version 5 or 10 only.
+		// pflow speaks version 5 or 10 only.
 		if p.Proto != 5 && p.Proto != 10 {
 			errs = append(errs, fmt.Sprintf("%s: pflow protocol version must be 5 or 10", label))
 		}

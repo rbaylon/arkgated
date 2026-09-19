@@ -19,6 +19,7 @@ import (
 	pfconfig "github.com/rbaylon/arkgated/config/pf"
 	"github.com/rbaylon/arkgated/config/webconf"
 	"github.com/rbaylon/arkgated/srvclient"
+	pfconfigmodel "github.com/rbaylon/srvcman/modules/pfconfig/model"
 )
 
 // webcreds is everything arkgated still takes on the command line. Every
@@ -95,7 +96,7 @@ func refreshToken(store *webconf.Store) *string {
 	// nil token, so arkgated self-heals once srvcman comes back instead of
 	// staying permanently stuck.
 	if apitoken == nil {
-		token, err := srvclient.GetToken(c.Creds, c.SrvcURL+"login")
+		token, err := srvclient.GetToken(c.APIUser, c.APIPassword, c.SrvcURL+"login")
 		if err != nil {
 			log.Println("refreshToken:", err)
 			return nil
@@ -108,7 +109,7 @@ func refreshToken(store *webconf.Store) *string {
 		log.Println(err)
 	}
 	if expired {
-		token, err := srvclient.GetToken(c.Creds, c.SrvcURL+"login")
+		token, err := srvclient.GetToken(c.APIUser, c.APIPassword, c.SrvcURL+"login")
 		if err != nil {
 			return nil
 		}
@@ -171,20 +172,59 @@ func worker(job <-chan joborder, ctx context.Context) {
 	}
 }
 
+// enrollOnce attempts enrollment unless it has already succeeded, and returns
+// the new "enrolled" state. lastErr carries the previous failure so a srvcman
+// that stays unreachable does not reprint the same line every tick; it is
+// cleared on success.
+//
+// Enrollment is retried because it used to be attempted exactly once, at
+// startup: a gateway that booted before srvcman was reachable logged
+// "Enroll: no API token available" and then ran unenrolled until somebody
+// restarted it, even though the token refresher acquired a token seconds
+// later. Note this only registers the router with srvcman; the startup
+// PfCreate that also failed is a staging step (it writes rundir/pf.conf, it
+// does not load it into pf), and srvcman restages it on the next CheckPF.
+func enrollOnce(store *webconf.Store, pfcfg *pfconfigmodel.Pfconfig, enrolled bool, lastErr *string) bool {
+	if enrolled {
+		return true
+	}
+	if err := srvclient.Enroll(store.Get().SrvcURL, apitoken, pfcfg); err != nil {
+		// Deduplicated: the common failure here is "no API token available"
+		// every 15s until srvcman answers, which is not worth a log line each
+		// time. A *changed* error is worth seeing.
+		if msg := err.Error(); msg != *lastErr {
+			log.Println("Error enrolling router: ", err)
+			*lastErr = msg
+		}
+		return false
+	}
+	*lastErr = ""
+	return true
+}
+
 // refreshTokenLoop calls refreshToken on a fixed interval for as long as ctx
-// is live. This used to run inline, once per accepted connection, right
+// is live, and retries enrollment on the same tick until it succeeds. This used to run inline, once per accepted connection, right
 // before the single listener's blocking Accept() call - now that arkgated
 // can listen on more than one socket at once (Unix + mTLS), there's no
 // single Accept() to hang it off, so it's its own loop instead. Checks
 // immediately on start (in case apitoken is already nil, e.g. the initial
 // login at startup failed) rather than waiting out the first tick.
-func refreshTokenLoop(store *webconf.Store, ctx context.Context) {
+func refreshTokenLoop(store *webconf.Store, pfcfg *pfconfigmodel.Pfconfig, enrolled bool, lastEnrollErr string, ctx context.Context) {
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
+	// enrolled/lastEnrollErr stay local to this goroutine, which is also the
+	// only writer of apitoken - so retrying enrollment here adds no sharing
+	// beyond what the token refresh already does. lastEnrollErr is handed in
+	// from run()'s first attempt rather than starting empty, so a failure that
+	// is still the same failure on the immediate first tick is not printed
+	// twice at startup.
 	for {
 		if newtoken := refreshToken(store); newtoken != nil {
 			apitoken = newtoken
 		}
+		// After the token, so the first retry can use a token that was not
+		// available when run() made the initial attempt.
+		enrolled = enrollOnce(store, pfcfg, enrolled, &lastEnrollErr)
 		select {
 		case <-ctx.Done():
 			return
@@ -213,16 +253,18 @@ func run(store *webconf.Store, out io.Writer, sockets []net.Listener, ctx contex
 	}
 
 	srvcurl := store.Get().SrvcURL
-	if err := srvclient.Enroll(srvcurl, apitoken, pfcfg); err != nil {
-		log.Println("Error enrolling router: ", err)
-	}
+	// First attempt stays here, ahead of PfCreate: GetSubs has nothing to
+	// return for a router srvcman does not know about yet. If it fails,
+	// refreshTokenLoop keeps retrying - see enrollOnce.
+	enrollErr := ""
+	enrolled := enrollOnce(store, pfcfg, false, &enrollErr)
 
 	if err := pfconfig.PfCreate(pfcfg.Router, rundir, srvcurl, apitoken); err != nil {
 		log.Println("Error creating pf config file: ", err)
 	}
 	job := make(chan joborder, 10)
 	go worker(job, ctx)
-	go refreshTokenLoop(store, ctx)
+	go refreshTokenLoop(store, pfcfg, enrolled, enrollErr, ctx)
 
 	// handleConn is shared by every listener's accept loop below - a
 	// command means the same thing regardless of whether it arrived over
@@ -585,7 +627,7 @@ func main() {
 
 	//go srvclient.ExecScripts(&statCmd, "/tmp/mystats", 10)
 
-	token, err := srvclient.GetToken(c.Creds, c.SrvcURL+"login")
+	token, err := srvclient.GetToken(c.APIUser, c.APIPassword, c.SrvcURL+"login")
 	apitoken = token
 	if err != nil {
 		log.Println(err)

@@ -76,13 +76,21 @@ func Enroll(urlbase string, token *string, pf *pfconfigmodel.Pfconfig) error {
 	return nil
 }
 
-func GetToken(creds string, api_login_url string) (*string, error) {
+// GetToken logs in to srvcman with HTTP Basic auth and returns the JWT.
+//
+// user/pass are the plain credentials; req.SetBasicAuth does the base64. This
+// used to take one pre-encoded "creds" string that was interpolated straight
+// after "Basic ", which meant every caller - and every operator filling in a
+// config file or a web form - had to hand-encode user:password themselves and
+// got no error at all if they pasted something that was not valid base64, just
+// a 401 from srvcman.
+func GetToken(user, pass string, api_login_url string) (*string, error) {
 	client := &http.Client{}
 	req, err := http.NewRequest("GET", api_login_url, nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", fmt.Sprintf("Basic %s", creds))
+	req.SetBasicAuth(user, pass)
 	res, err := client.Do(req)
 	if err != nil {
 		return nil, err

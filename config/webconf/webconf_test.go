@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"io"
@@ -142,10 +143,11 @@ func TestSaveWritesSettingsAndUnblocks(t *testing.T) {
 	store, srv := newSrv(t, path)
 
 	w := post(t, srv, validForm(map[string]string{
-		"srvcurl": "https://srvcman.example/api/v1", // no trailing slash
-		"rundir":  "/var/arkgate",                   // no trailing slash
-		"creds":   "Zm9vOmJhcg==",
-		"maxbuff": "4096",
+		"srvcurl":     "https://srvcman.example/api/v1", // no trailing slash
+		"rundir":      "/var/arkgate",                   // no trailing slash
+		"apiuser":     "apiacct",
+		"apipassword": "s3cret",
+		"maxbuff":     "4096",
 	}))
 	if w.Code != http.StatusOK {
 		t.Fatalf("save got %d", w.Code)
@@ -183,8 +185,12 @@ func TestSaveWritesSettingsAndUnblocks(t *testing.T) {
 	if err := json.Unmarshal(b, &onDisk); err != nil {
 		t.Fatalf("settings file is not valid JSON: %v", err)
 	}
-	if onDisk.Creds != "Zm9vOmJhcg==" {
-		t.Errorf("creds not persisted: %q", onDisk.Creds)
+	if onDisk.APIUser != "apiacct" || onDisk.APIPassword != "s3cret" {
+		t.Errorf("API credentials not persisted: %q / %q", onDisk.APIUser, onDisk.APIPassword)
+	}
+	// The pre-split base64 form must not be written back.
+	if onDisk.Creds != "" {
+		t.Errorf("legacy creds key should not be persisted, got %q", onDisk.Creds)
 	}
 	if runtime.GOOS != "windows" {
 		fi, err := os.Stat(path)
@@ -210,7 +216,7 @@ func TestInvalidSaveChangesNothing(t *testing.T) {
 	store, srv := newSrv(t, path)
 
 	// Seed a good config first.
-	post(t, srv, validForm(map[string]string{"creds": "good"}))
+	post(t, srv, validForm(map[string]string{"apiuser": "u", "apipassword": "good"}))
 	before := store.Get()
 
 	for _, tc := range []struct {
@@ -243,14 +249,19 @@ func TestBlankSecretKeepsStoredCreds(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
 	store, srv := newSrv(t, path)
 
-	post(t, srv, validForm(map[string]string{"creds": "original"}))
+	post(t, srv, validForm(map[string]string{"apiuser": "u", "apipassword": "original"}))
 
-	w := post(t, srv, validForm(map[string]string{"creds": "", "maxbuff": "2048"}))
+	// Blank password means "keep the stored one"; the username is an ordinary
+	// text field and has to be resubmitted like any other.
+	w := post(t, srv, validForm(map[string]string{"apiuser": "u", "apipassword": "", "maxbuff": "2048"}))
 	if !strings.Contains(w.Body.String(), "Saved.") {
 		t.Fatalf("blank secret should not fail validation:\n%s", w.Body.String())
 	}
-	if got := store.Get().Creds; got != "original" {
-		t.Errorf("creds = %q, want the stored value kept", got)
+	if got := store.Get().APIPassword; got != "original" {
+		t.Errorf("api password = %q, want the stored value kept", got)
+	}
+	if got := store.Get().APIUser; got != "u" {
+		t.Errorf("api user = %q, want it unchanged", got)
 	}
 	if got := store.Get().MaxBuff; got != 2048 {
 		t.Errorf("maxbuff = %d, want the other edit to land", got)
@@ -265,19 +276,19 @@ func TestRestartWarningOnlyForStartupSettings(t *testing.T) {
 	_, srv := newSrv(t, path)
 
 	// First save: nothing is bound yet, so nothing needs a restart.
-	w := post(t, srv, validForm(map[string]string{"creds": "c"}))
+	w := post(t, srv, validForm(map[string]string{"apiuser": "u", "apipassword": "p"}))
 	if strings.Contains(w.Body.String(), "only take effect after a restart") {
 		t.Error("first save should not ask for a restart")
 	}
 
 	// maxbuff is read per connection.
-	w = post(t, srv, validForm(map[string]string{"creds": "c", "maxbuff": "2048"}))
+	w = post(t, srv, validForm(map[string]string{"apiuser": "u", "apipassword": "p", "maxbuff": "2048"}))
 	if strings.Contains(w.Body.String(), "only take effect after a restart") {
 		t.Error("maxbuff change should not need a restart")
 	}
 
 	// listenaddr is read once, when the socket is bound.
-	w = post(t, srv, validForm(map[string]string{"creds": "c", "maxbuff": "2048", "listenaddr": "10.0.0.1:9443"}))
+	w = post(t, srv, validForm(map[string]string{"apiuser": "u", "apipassword": "p", "maxbuff": "2048", "listenaddr": "10.0.0.1:9443"}))
 	body := w.Body.String()
 	if !strings.Contains(body, "only take effect after a restart") {
 		t.Fatalf("listenaddr change should need a restart:\n%s", body)
@@ -300,7 +311,7 @@ func TestCrossOriginSaveRejected(t *testing.T) {
 		t.Fatalf("cross-origin POST got %d, want 403", w.Code)
 	}
 
-	r = httptest.NewRequest(http.MethodPost, "/", strings.NewReader(validForm(map[string]string{"creds": "c"}).Encode()))
+	r = httptest.NewRequest(http.MethodPost, "/", strings.NewReader(validForm(map[string]string{"apiuser": "u", "apipassword": "p"}).Encode()))
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	r.Header.Set("Origin", "http://"+r.Host)
 	r.SetBasicAuth("adm", "sekrit")
@@ -314,7 +325,7 @@ func TestCrossOriginSaveRejected(t *testing.T) {
 func TestReloadRejectsBrokenFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
 	store, srv := newSrv(t, path)
-	post(t, srv, validForm(map[string]string{"creds": "c"}))
+	post(t, srv, validForm(map[string]string{"apiuser": "u", "apipassword": "p"}))
 	before := store.Get()
 
 	if err := os.WriteFile(path, []byte(`{"maxbuff": 1}`), 0600); err != nil {
@@ -355,7 +366,7 @@ func TestListenAndServeAndShutdown(t *testing.T) {
 
 	dir := filepath.Dir(path)
 	addr := freePort(t)
-	post(t, srv, formIn(dir, map[string]string{"creds": "c", "webaddr": addr}))
+	post(t, srv, formIn(dir, map[string]string{"apiuser": "u", "apipassword": "p", "webaddr": addr}))
 	if store.Get().WebAddr != addr {
 		t.Fatalf("webaddr = %q, want %q", store.Get().WebAddr, addr)
 	}
@@ -570,7 +581,8 @@ func TestWebCertIsIndependentOfMTLSPair(t *testing.T) {
 	// the configurator's own pair - the two boundaries are separate, and the
 	// configurator has to come up before any PKI material is provisioned.
 	w := post(t, srv, formIn(dir, map[string]string{
-		"creds":       "c",
+		"apiuser":     "u",
+		"apipassword": "p",
 		"tlscert":     "/etc/ssl/ipc-only.crt",
 		"tlskey":      "/etc/ssl/ipc-only.key",
 		"tlsclientca": "/etc/ssl/srvcman-ca.crt",
@@ -602,12 +614,13 @@ func TestValidateRejectsSharedOrMissingWebPair(t *testing.T) {
 		form url.Values
 		want string
 	}{
-		{"no cert", formIn(dir, map[string]string{"creds": "c", "webcert": ""}), "certificate path is required"},
-		{"no key", formIn(dir, map[string]string{"creds": "c", "webkey": ""}), "key path is required"},
+		{"no cert", formIn(dir, map[string]string{"apiuser": "u", "apipassword": "p", "webcert": ""}), "certificate path is required"},
+		{"no key", formIn(dir, map[string]string{"apiuser": "u", "apipassword": "p", "webkey": ""}), "key path is required"},
 		{"same file", formIn(dir, map[string]string{
-			"creds":   "c",
-			"webcert": filepath.Join(dir, "both.pem"),
-			"webkey":  filepath.Join(dir, "both.pem"),
+			"apiuser":     "u",
+			"apipassword": "p",
+			"webcert":     filepath.Join(dir, "both.pem"),
+			"webkey":      filepath.Join(dir, "both.pem"),
 		}), "must be different files"},
 	} {
 		w := post(t, srv, tc.form)
@@ -628,7 +641,7 @@ func TestDefaultWebAddrBindsAllAddresses(t *testing.T) {
 	}
 	// Still a valid setting, and still HTTPS-only with a mandatory password -
 	// widening the bind must not have loosened anything else.
-	d.Creds = "x"
+	d.APIUser, d.APIPassword = "u", "p"
 	if errs := d.Validate(); len(errs) > 0 {
 		t.Errorf("defaults should validate, got %v", errs)
 	}
@@ -680,5 +693,117 @@ func TestWildcardBindCertCoversLocalAddresses(t *testing.T) {
 	// Loopback must keep working too, for an ssh-tunnelled admin.
 	if _, err := leaf.Verify(x509.VerifyOptions{DNSName: "127.0.0.1", Roots: pool}); err != nil {
 		t.Errorf("cert should still cover loopback: %v", err)
+	}
+}
+
+func TestAPICredentialsAreSeparateFieldsNotBase64(t *testing.T) {
+	// The whole point of the split: an operator types a username and a
+	// password, never a base64 blob.
+	keys := map[string]kind{}
+	for _, f := range fields() {
+		keys[f.Key] = f.Kind
+	}
+	if k, ok := keys["apiuser"]; !ok || k != kindText {
+		t.Errorf("apiuser should be a plain text field, got %q ok=%v", k, ok)
+	}
+	if k, ok := keys["apipassword"]; !ok || k != kindSecret {
+		t.Errorf("apipassword should be a secret field, got %q ok=%v", k, ok)
+	}
+	if _, ok := keys["creds"]; ok {
+		t.Error("the pre-split creds field should no longer be offered in the form")
+	}
+
+	// Both halves are required, since srvcman's login is Basic auth.
+	d := Defaults()
+	errs := strings.Join(d.Validate(), "\n")
+	if !strings.Contains(errs, "API username is required") {
+		t.Errorf("missing username should be an error, got: %v", errs)
+	}
+	if !strings.Contains(errs, "API password is required") {
+		t.Errorf("missing password should be an error, got: %v", errs)
+	}
+}
+
+func TestLegacyBase64CredsMigrates(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.json")
+
+	// A settings.json from before the split: one base64 "user:password".
+	old := Defaults()
+	old.RunDir = dir + "/"
+	old.WebCert = filepath.Join(dir, "w.crt")
+	old.WebKey = filepath.Join(dir, "w.key")
+	old.Creds = base64.StdEncoding.EncodeToString([]byte("apiacct:s3cret"))
+	b, err := json.Marshal(old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, b, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := store.Get()
+	if got.APIUser != "apiacct" || got.APIPassword != "s3cret" {
+		t.Fatalf("migrated to %q / %q, want apiacct / s3cret", got.APIUser, got.APIPassword)
+	}
+	if got.Creds != "" {
+		t.Errorf("legacy value should be cleared after migration, got %q", got.Creds)
+	}
+	// Migration alone must make the settings usable - no re-typing required.
+	if !store.Configured() {
+		t.Error("a migrated settings file should be configured")
+	}
+
+	// And it must not be written back in the old form.
+	if _, _, err := store.Save(store.Get()); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), `"creds"`) {
+		t.Errorf("settings.json still carries a creds key:\n%s", raw)
+	}
+}
+
+func TestLegacyCredsGarbageIsDroppedNotCarried(t *testing.T) {
+	// The old -creds flag defaulted to "./rundir/", which is not valid base64
+	// and was never a usable Basic value. It must surface as a missing
+	// credential, not be forwarded to srvcman to fail as a 401.
+	for _, bad := range []string{"./rundir/", "notbase64!!", base64.StdEncoding.EncodeToString([]byte("nocolon"))} {
+		s := Defaults()
+		s.Creds = bad
+		migrated, garbage := s.migrateLegacyCreds()
+		if migrated {
+			t.Errorf("%q should not migrate", bad)
+		}
+		if !garbage {
+			t.Errorf("%q should be reported as unusable", bad)
+		}
+		if s.APIUser != "" || s.APIPassword != "" {
+			t.Errorf("%q left credentials %q/%q", bad, s.APIUser, s.APIPassword)
+		}
+		if s.Creds != "" {
+			t.Errorf("%q should be cleared", bad)
+		}
+	}
+}
+
+func TestExplicitCredentialsBeatLegacyCreds(t *testing.T) {
+	// A file carrying both must keep the new fields; the legacy value is only
+	// a fallback for files that predate them.
+	s := Defaults()
+	s.APIUser, s.APIPassword = "newuser", "newpass"
+	s.Creds = base64.StdEncoding.EncodeToString([]byte("olduser:oldpass"))
+	if migrated, _ := s.migrateLegacyCreds(); migrated {
+		t.Error("should not migrate over explicit credentials")
+	}
+	if s.APIUser != "newuser" || s.APIPassword != "newpass" {
+		t.Errorf("explicit credentials were overwritten: %q / %q", s.APIUser, s.APIPassword)
 	}
 }

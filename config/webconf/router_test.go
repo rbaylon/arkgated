@@ -57,7 +57,7 @@ func TestRouterValidationCatchesDaemonKillers(t *testing.T) {
 		{"bad type", func(c *RouterConfig) { c.Ifaces[0].Type = "wan" }, "type must be external or internal"},
 		// A DHCP scope's type is an interface name reference.
 		{"dhcp names unknown iface", func(c *RouterConfig) { c.Dhcps[0].Type = "nope" }, "no interface is named"},
-		{"dhcp bad range", func(c *RouterConfig) { c.Dhcps[0].Range = "172.16.1.1" }, "range must be two addresses"},
+		{"dhcp lopsided range", func(c *RouterConfig) { c.Dhcps[0].Range = "172.16.1.1" }, "range must be two addresses"},
 		{"dhcp range not an ip", func(c *RouterConfig) { c.Dhcps[0].Range = "172.16.1.1 nope" }, "is not an IP address"},
 		// Duplicates silently clobber generated hostname.if files.
 		{"duplicate device", func(c *RouterConfig) { c.Ifaces[1].Device = "em0" }, "already used by another interface"},
@@ -265,7 +265,7 @@ func routerSrv(t *testing.T) (*Server, string) {
 	t.Helper()
 	dir := t.TempDir()
 	store, srv := newSrv(t, filepath.Join(dir, "settings.json"))
-	post(t, srv, formIn(dir, map[string]string{"creds": "c", "rundir": dir}))
+	post(t, srv, formIn(dir, map[string]string{"apiuser": "u", "apipassword": "p", "rundir": dir}))
 	if got := store.Get().RunDir; got != dir+"/" {
 		t.Fatalf("rundir = %q, want %q", got, dir+"/")
 	}
@@ -508,5 +508,141 @@ func TestConfiguredDefaultBeatsDetectedEgress(t *testing.T) {
 	}
 	if n != 1 {
 		t.Errorf("%d rows marked default, want exactly 1", n)
+	}
+}
+
+// DHCP scopes and pflow exports are both optional sections: a config with
+// neither must be perfectly valid, since srvcman's dhcp module owns dhcpd.conf
+// and not every box exports flows.
+func TestDhcpAndPflowSectionsAreOptional(t *testing.T) {
+	c := goodRouter()
+	c.Dhcps = nil
+	c.Pflows = nil
+	c.Normalize()
+	if errs := c.Validate(); len(errs) > 0 {
+		t.Fatalf("a config with no DHCP scopes and no pflow exports should be valid, got: %v", errs)
+	}
+}
+
+// Within a DHCP row nothing is required either - arkgated never reads Dhcps, it
+// is only the enrollment seed, so a partial scope is srvcman's business.
+func TestPartialDhcpRowIsAccepted(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		row  RouterDhcp
+	}{
+		{"interface only", RouterDhcp{Type: "lan"}},
+		{"subnet only", RouterDhcp{Subnet: "172.16.0.0"}},
+		{"no range", RouterDhcp{Type: "lan", Subnet: "172.16.0.0", Netmask: "255.255.0.0"}},
+		{"no netmask", RouterDhcp{Type: "lan", Subnet: "172.16.0.0", Range: "172.16.1.1 172.16.9.255"}},
+	} {
+		c := goodRouter()
+		c.Dhcps = []RouterDhcp{tc.row}
+		c.Normalize()
+		if errs := c.Validate(); len(errs) > 0 {
+			t.Errorf("%s: partial DHCP row should be accepted, got: %v", tc.name, errs)
+		}
+	}
+}
+
+// Typos are still caught, even though nothing is required.
+func TestPartialDhcpRowStillCatchesTypos(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		row  RouterDhcp
+		want string
+	}{
+		{"bad subnet", RouterDhcp{Type: "lan", Subnet: "172.16.0.999"}, "is not an IP address"},
+		{"bad netmask", RouterDhcp{Type: "lan", Netmask: "255.0.255.0"}, "not a valid dotted netmask"},
+		{"unknown interface", RouterDhcp{Type: "nope"}, "no interface is named"},
+		{"range not an ip", RouterDhcp{Type: "lan", Range: "172.16.1.1 nope"}, "is not an IP address"},
+		{"one-sided range", RouterDhcp{Type: "lan", Range: "172.16.1.1"}, "range must be two addresses"},
+		{"bad dns handed out", RouterDhcp{Type: "lan", Dnsservers: "notanip"}, "is not an IP address"},
+	} {
+		c := goodRouter()
+		c.Dhcps = []RouterDhcp{tc.row}
+		c.Normalize()
+		errs := strings.Join(c.Validate(), "\n")
+		if !strings.Contains(errs, tc.want) {
+			t.Errorf("%s: want %q, got: %v", tc.name, tc.want, errs)
+		}
+	}
+}
+
+// A pflow row is NOT relaxed the way a DHCP row is: ConfigCreate writes it into
+// hostname.<device> as flowsrc/flowdst/pflowproto, so a missing field there
+// produces an interface file that breaks netstart.
+func TestPflowRowMustBeCompleteBecauseItWritesAnIfaceFile(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		row  RouterPflow
+		want string
+	}{
+		{"no device", RouterPflow{Src: "127.0.0.1", Dst: "10.0.0.5:9995", Proto: 10}, "pflow device is required"},
+		{"no src", RouterPflow{Device: "pflow0", Dst: "10.0.0.5:9995", Proto: 10}, "flow source is required"},
+		{"no dst", RouterPflow{Device: "pflow0", Src: "127.0.0.1", Proto: 10}, "flow destination is required"},
+		{"no proto", RouterPflow{Device: "pflow0", Src: "127.0.0.1", Dst: "10.0.0.5:9995"}, "must be 5 or 10"},
+	} {
+		c := goodRouter()
+		c.Pflows = []RouterPflow{tc.row}
+		c.Normalize()
+		errs := strings.Join(c.Validate(), "\n")
+		if !strings.Contains(errs, tc.want) {
+			t.Errorf("%s: want %q, got: %v", tc.name, tc.want, errs)
+		}
+	}
+
+	// ...but a complete one is fine, and version 5 is as valid as 10.
+	for _, proto := range []int{5, 10} {
+		c := goodRouter()
+		c.Pflows = []RouterPflow{{Device: "pflow0", Src: "127.0.0.1", Dst: "10.0.0.5:9995", Proto: proto}}
+		c.Normalize()
+		if errs := c.Validate(); len(errs) > 0 {
+			t.Errorf("proto %d: complete pflow row should be valid, got %v", proto, errs)
+		}
+	}
+}
+
+// The form must be saveable with both optional sections left completely blank,
+// which is what an operator who manages DHCP in srvcman will actually do.
+func TestRouterFormSavesWithNoDhcpOrPflowRows(t *testing.T) {
+	srv, path := routerSrv(t)
+
+	// routerForm submits no dhcp.* or pflow.* keys at all.
+	w := postRouter(t, srv, routerForm("em0", "em1"))
+	if !strings.Contains(w.Body.String(), "Saved.") {
+		t.Fatalf("save failed:\n%s", w.Body.String())
+	}
+	cfg, _, err := LoadRouterConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Dhcps) != 0 {
+		t.Errorf("dhcps = %d, want none", len(cfg.Dhcps))
+	}
+	if len(cfg.Pflows) != 0 {
+		t.Errorf("pflows = %d, want none", len(cfg.Pflows))
+	}
+
+	// And the blank rows the page renders must not turn into real entries when
+	// submitted untouched - the pflow row is pre-filled with a src and proto.
+	form := routerForm("em0", "em1")
+	form.Set("dhcp.0.netmask", "255.255.255.0")
+	form.Set("dhcp.0.type", "")
+	form.Set("dhcp.0.subnet", "")
+	form.Set("dhcp.0.range", "")
+	form.Set("pflow.0.device", "")
+	form.Set("pflow.0.src", "127.0.0.1")
+	form.Set("pflow.0.dst", "")
+	form.Set("pflow.0.proto", "10")
+	if w := postRouter(t, srv, form); !strings.Contains(w.Body.String(), "Saved.") {
+		t.Fatalf("untouched blank rows should not block a save:\n%s", w.Body.String())
+	}
+	cfg, _, err = LoadRouterConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Dhcps) != 0 || len(cfg.Pflows) != 0 {
+		t.Errorf("untouched blank rows became entries: %d dhcps, %d pflows", len(cfg.Dhcps), len(cfg.Pflows))
 	}
 }

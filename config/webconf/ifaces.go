@@ -223,6 +223,11 @@ func ListHostIfaces() ([]HostIface, error) {
 	return parseIfconfig(strings.NewReader(string(out))), nil
 }
 
+// listHostIfaces is the seam the router page reads the host's interfaces
+// through, so tests can render the page against captured ifconfig output on a
+// machine that has no ifconfig at all. Production always uses ListHostIfaces.
+var listHostIfaces = ListHostIfaces
+
 // AssignableHostIfaces is ListHostIfaces filtered to real NICs - what the form
 // offers as device choices.
 func AssignableHostIfaces() ([]HostIface, error) {

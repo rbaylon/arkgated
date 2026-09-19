@@ -95,7 +95,7 @@ footer { color: var(--muted); font-size: 12px; margin-top: 24px; }
   <nav><a href="/">Daemon settings</a><a class="here" href="/router">Router config</a></nav>
 
   {{if not .Found}}
-  <div class="note warn"><strong>Not created yet.</strong> arkgated needs this file before it can generate pf.conf or enroll with srvcman. Interfaces detected on this box are pre-filled below — check them and save.</div>
+  <div class="note warn"><strong>Not created yet.</strong> arkgated needs this file before it can generate pf.conf or enroll with srvcman. The interfaces detected on this box are pre-filled below — check them and save.</div>
   {{end}}
 
   {{if .Saved}}
@@ -107,32 +107,6 @@ footer { color: var(--muted); font-size: 12px; margin-top: 24px; }
     {{if gt (len .Errors) 1}}<ul>{{range $i, $e := .Errors}}{{if $i}}<li>{{$e}}</li>{{end}}{{end}}</ul>{{end}}
   </div>
   {{end}}
-
-  <section>
-    <h2>Interfaces on this box</h2>
-    <p class="hint">Read from <code class="mono">ifconfig -a</code>. Devices marked <span class="pill pseudo">pseudo</span> are loopback, pf or arkgated-managed (vlan/pppac/pflow) and cannot be assigned here.</p>
-    {{if .DetectErr}}
-      <div class="note warn">Could not read the interface list: <span class="mono">{{.DetectErr}}</span><br>Type device names in by hand below.</div>
-    {{else if not .Detected}}
-      <p class="hint">No interfaces reported.</p>
-    {{else}}
-    <table>
-      <tr><th>Device</th><th>Link</th><th>Media</th><th>Rate</th><th>Addresses</th></tr>
-      {{range .Detected}}
-      <tr>
-        <td class="mono">{{.Device}}
-          {{if .Egress}}<span class="pill">egress</span>{{end}}
-          {{if .Managed}}<span class="pill pseudo">pseudo</span>{{end}}
-        </td>
-        <td>{{if .Up}}up{{else}}<span class="pill off">down</span>{{end}}{{if .Status}} / {{.Status}}{{end}}</td>
-        <td class="mono">{{if .Media}}{{.Media}}{{else}}&mdash;{{end}}</td>
-        <td class="mono">{{if .Speed}}{{.Speed}}{{else}}&mdash;{{end}}</td>
-        <td class="mono">{{if .Addrs}}{{.Addrs}}{{else}}&mdash;{{end}}</td>
-      </tr>
-      {{end}}
-    </table>
-    {{end}}
-  </section>
 
   <form method="post" action="/router">
     <datalist id="devices">{{range .DeviceNames}}<option value="{{.}}">{{end}}</datalist>
@@ -175,10 +149,14 @@ footer { color: var(--muted); font-size: 12px; margin-top: 24px; }
 
     <section>
       <h2>Interfaces</h2>
-      <p class="hint">Clear a row's name and device to delete it. Exactly one interface is the default route — that is the one <code class="mono">mygate</code> and <code class="mono">resolv.conf</code> are written from.</p>
+      <p class="hint">Devices found on this box by <code class="mono">ifconfig -a</code> are pre-filled below, with their live state shown on each row. Clear a row's name and device to delete it. Exactly one interface is the default route — that is the one <code class="mono">mygate</code> and <code class="mono">resolv.conf</code> are written from.</p>
+      {{if .DetectErr}}<div class="note warn">Could not read the interface list: <span class="mono">{{.DetectErr}}</span><br>Type device names in by hand.</div>{{end}}
       {{range .Ifaces}}
       <div class="row">
-        <h3>Interface {{.Idx}}</h3>
+        <h3>Interface {{.Idx}}{{if .Known}} — <span class="mono">{{.Device}}</span>
+          {{if .Up}}<span class="pill">up</span>{{else}}<span class="pill off">down</span>{{end}}
+          {{if .Egress}}<span class="pill">egress</span>{{end}}{{end}}</h3>
+        {{if .Known}}<p class="help mono">{{with .Status}}{{.}}{{end}}{{with .Media}} &middot; {{.}}{{end}}{{with .Addrs}} &middot; {{.}}{{end}}</p>{{end}}
         <div class="grid">
           <div>
             <label for="iface.{{.Idx}}.name">Name</label>
@@ -221,6 +199,10 @@ footer { color: var(--muted); font-size: 12px; margin-top: 24px; }
       </div>
       {{end}}
       <datalist id="iftypes"><option value="external"><option value="internal"></datalist>
+      {{if .PseudoNames}}
+      <p class="hint" style="margin:0">Not assignable here (loopback, pf, or created by arkgated itself):
+        {{range $i, $d := .PseudoNames}}{{if $i}}, {{end}}<span class="mono">{{$d}}</span>{{end}}</p>
+      {{end}}
     </section>
 
     <section>
@@ -261,7 +243,7 @@ footer { color: var(--muted); font-size: 12px; margin-top: 24px; }
 
     <section>
       <h2>pflow exports <span class="opt">optional</span></h2>
-      <p class="hint">NetFlow/pflow export. Leave empty if you do not use it. Unlike DHCP, a row you <em>do</em> add must be complete: each one is written to <code class="mono">hostname.&lt;device&gt;</code> as <code class="mono">flowsrc</code>/<code class="mono">flowdst</code>/<code class="mono">pflowproto</code>, and a missing value there produces an interface file that breaks <code class="mono">netstart</code>. Clear a row's device and destination to delete it.</p>
+      <p class="hint">NetFlow/pflow export. Entirely optional — leave it empty and nothing is generated. A complete row is written to <code class="mono">hostname.&lt;device&gt;</code> as <code class="mono">flowsrc</code>/<code class="mono">flowdst</code>/<code class="mono">pflowproto</code>; a row missing any of those is saved but skipped when the interface files are rendered (arkgated logs which one), because a partial export would produce a file that breaks <code class="mono">netstart</code>. Clear a row's device and destination to delete it.</p>
       {{range .Pflows}}
       <div class="row">
         <h3>Export {{.Idx}}</h3>

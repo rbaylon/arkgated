@@ -185,17 +185,16 @@ type routerIfaceRow struct {
 	Idx int
 	RouterIface
 	SpeedHint string // from the host's media rate, when the device is known
-}
 
-type detectedIface struct {
-	Device  string
-	Status  string
-	Media   string
-	Speed   string
-	Addrs   string
-	Egress  bool
-	Up      bool
-	Managed bool
+	// Detected facts about this row's device, shown inline on the row. These
+	// used to be a separate read-only table above the form, which meant every
+	// interface appeared twice on the page.
+	Known  bool
+	Up     bool
+	Status string
+	Media  string
+	Addrs  string
+	Egress bool
 }
 
 type routerPage struct {
@@ -220,9 +219,12 @@ type routerPage struct {
 	LoadBalance       bool
 	Dns               string
 
-	Detected    []detectedIface
+	// DetectErr is set when the host's interfaces could not be read at all;
+	// PseudoNames are the devices that exist but cannot be assigned (loopback,
+	// pf, arkgated-managed), listed as a one-line note instead of table rows.
 	DetectErr   string
 	DeviceNames []string
+	PseudoNames []string
 }
 
 // routerPage builds the view model, and is where the host's own interface list
@@ -242,26 +244,15 @@ func (srv *Server) routerPage(cfg RouterConfig, found bool) routerPage {
 		Dns:               cfg.Dns,
 	}
 
-	hostIfs, err := ListHostIfaces()
+	hostIfs, err := listHostIfaces()
 	if err != nil {
 		p.DetectErr = err.Error()
 	}
-	speedByDevice := map[string]string{}
 	for _, h := range hostIfs {
-		managed := !h.Assignable()
-		p.Detected = append(p.Detected, detectedIface{
-			Device:  h.Device,
-			Status:  h.Status,
-			Media:   h.Media,
-			Speed:   h.SpeedHint(),
-			Addrs:   strings.Join(h.Addrs, ", "),
-			Egress:  h.Egress(),
-			Up:      h.Up(),
-			Managed: managed,
-		})
-		if !managed {
+		if h.Assignable() {
 			p.DeviceNames = append(p.DeviceNames, h.Device)
-			speedByDevice[h.Device] = h.SpeedHint()
+		} else {
+			p.PseudoNames = append(p.PseudoNames, h.Device)
 		}
 	}
 
@@ -324,7 +315,9 @@ func seedRowsFrom(hostIfs []HostIface, cfg RouterConfig) []routerIfaceRow {
 			haveDefault = true
 		}
 		used[in.Device] = true
-		rows = append(rows, routerIfaceRow{Idx: i, RouterIface: in, SpeedHint: speed[in.Device]})
+		row := routerIfaceRow{Idx: i, RouterIface: in, SpeedHint: speed[in.Device]}
+		attachDetected(&row, byDev)
+		rows = append(rows, row)
 	}
 
 	next := len(cfg.Ifaces)
@@ -353,6 +346,7 @@ func seedRowsFrom(hostIfs []HostIface, cfg RouterConfig) []routerIfaceRow {
 				haveDefault = true
 			}
 		}
+		attachDetected(&row, byDev)
 		rows = append(rows, row)
 		next++
 	}
@@ -362,6 +356,25 @@ func seedRowsFrom(hostIfs []HostIface, cfg RouterConfig) []routerIfaceRow {
 		next++
 	}
 	return rows
+}
+
+// attachDetected copies what ifconfig said about this row's device onto the
+// row, so the live state is shown next to the field it describes instead of in
+// a second table that listed every interface all over again.
+func attachDetected(row *routerIfaceRow, byDev map[string]HostIface) {
+	h, ok := byDev[row.Device]
+	if !ok || row.Device == "" {
+		return
+	}
+	row.Known = true
+	row.Up = h.Up()
+	row.Status = h.Status
+	row.Media = h.Media
+	row.Addrs = strings.Join(h.Addrs, ", ")
+	row.Egress = h.Egress()
+	if row.SpeedHint == "" {
+		row.SpeedHint = h.SpeedHint()
+	}
 }
 
 func (srv *Server) renderRouter(w http.ResponseWriter, p routerPage) {

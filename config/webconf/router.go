@@ -284,32 +284,27 @@ func (c *RouterConfig) Validate() []string {
 		}
 	}
 
-	// pflow exports are optional too, but a row that exists is *not* relaxed
-	// the way a DHCP row is, because this one is consumed locally: ConfigCreate
-	// writes rundir/hostname.<device> containing "flowsrc <src> flowdst <dst>"
-	// and "pflowproto <n>". A row missing any of those produces a malformed
-	// hostname.if file, which breaks netstart for that interface - so if you
-	// add an export, it has to be complete.
+	// pflow exports are optional, and nothing inside a row is required either -
+	// same as DHCP. A row only reaches an actual hostname.if file if it is
+	// complete; pf.ConfigCreate skips (and logs) any export missing a device,
+	// source, destination or a valid version rather than writing a malformed
+	// interface file. So these rules only catch typos in what was filled in.
 	for n, p := range c.Pflows {
 		label := p.Device
 		if label == "" {
 			label = fmt.Sprintf("pflow export %d", n+1)
 		}
-		if p.Device == "" {
-			errs = append(errs, fmt.Sprintf("%s: pflow device is required - it names the hostname.if file this export is written to", label))
-		}
-		if p.Src == "" {
-			errs = append(errs, fmt.Sprintf("%s: flow source is required (it becomes flowsrc in hostname.%s)", label, p.Device))
-		} else if net.ParseIP(p.Src) == nil {
+		if p.Src != "" && net.ParseIP(p.Src) == nil {
 			errs = append(errs, fmt.Sprintf("%s: flow source %q is not an IP address", label, p.Src))
 		}
-		if p.Dst == "" {
-			errs = append(errs, fmt.Sprintf("%s: flow destination is required (host:port)", label))
-		} else if _, _, err := net.SplitHostPort(p.Dst); err != nil {
-			errs = append(errs, fmt.Sprintf("%s: flow destination must be host:port: %v", label, err))
+		if p.Dst != "" {
+			if _, _, err := net.SplitHostPort(p.Dst); err != nil {
+				errs = append(errs, fmt.Sprintf("%s: flow destination must be host:port: %v", label, err))
+			}
 		}
-		// pflow speaks version 5 or 10 only.
-		if p.Proto != 5 && p.Proto != 10 {
+		// pflow speaks version 5 or 10 only; 0 means "not set", which is fine
+		// for a partial row and is what makes ConfigCreate skip it.
+		if p.Proto != 0 && p.Proto != 5 && p.Proto != 10 {
 			errs = append(errs, fmt.Sprintf("%s: pflow protocol version must be 5 or 10", label))
 		}
 	}

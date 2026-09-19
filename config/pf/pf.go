@@ -132,7 +132,20 @@ func ConfigCreate(c *pfconfigmodel.Pfconfig, rundir string) error {
 		}
 	}
 
+	// pflow exports are optional. An empty Pflows writes nothing at all, and a
+	// record that cannot produce a usable hostname.if file is skipped rather
+	// than rendered: an empty Device would write a file literally named
+	// "hostname.", and an empty Src/Dst or a Proto that is not 5 or 10 would
+	// write a malformed one, which breaks netstart for that interface. The skip
+	// is logged so a half-filled export is visible rather than silently
+	// dropped - the router config form accepts partial pflow rows so they can
+	// still be sent to srvcman, and this is where they stop.
 	for _, p := range c.Pflows {
+		if p.Device == "" || p.Src == "" || p.Dst == "" || (p.Proto != 5 && p.Proto != 10) {
+			log.Printf("ConfigCreate: skipping incomplete pflow export (device=%q src=%q dst=%q proto=%d)",
+				p.Device, p.Src, p.Dst, p.Proto)
+			continue
+		}
 		iface := fmt.Sprintf("flowsrc %s flowdst %s\npflowproto %d\n", p.Src, p.Dst, p.Proto)
 		err := os.WriteFile(rundir+"hostname."+p.Device, []byte(iface+"\n"), 0640)
 		if err != nil {

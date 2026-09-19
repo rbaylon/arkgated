@@ -2,6 +2,7 @@ package webconf
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -358,7 +359,7 @@ func TestRouterPageShowsUnconfiguredBannerAndNav(t *testing.T) {
 		t.Fatalf("GET /router got %d", w.Code)
 	}
 	body := w.Body.String()
-	for _, want := range []string{"Not created yet", "Router config", "Interfaces on this box",
+	for _, want := range []string{"Not created yet", "Router config", "Interfaces",
 		`href="/"`, `name="iface.0.device"`, "Save router config"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("page missing %q", want)
@@ -569,37 +570,55 @@ func TestPartialDhcpRowStillCatchesTypos(t *testing.T) {
 	}
 }
 
-// A pflow row is NOT relaxed the way a DHCP row is: ConfigCreate writes it into
-// hostname.<device> as flowsrc/flowdst/pflowproto, so a missing field there
-// produces an interface file that breaks netstart.
-func TestPflowRowMustBeCompleteBecauseItWritesAnIfaceFile(t *testing.T) {
+// pflow rows are now as relaxed as DHCP rows: nothing inside one is required.
+// A partial row is saved (srvcman still gets it) and pf.ConfigCreate skips it
+// when rendering interface files, so it can never produce a broken hostname.if.
+func TestPartialPflowRowIsAccepted(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		row  RouterPflow
+	}{
+		{"device only", RouterPflow{Device: "pflow0"}},
+		{"no device", RouterPflow{Src: "127.0.0.1", Dst: "10.0.0.5:9995", Proto: 10}},
+		{"no src", RouterPflow{Device: "pflow0", Dst: "10.0.0.5:9995", Proto: 10}},
+		{"no dst", RouterPflow{Device: "pflow0", Src: "127.0.0.1", Proto: 10}},
+		{"no proto", RouterPflow{Device: "pflow0", Src: "127.0.0.1", Dst: "10.0.0.5:9995"}},
+	} {
+		c := goodRouter()
+		c.Pflows = []RouterPflow{tc.row}
+		c.Normalize()
+		if errs := c.Validate(); len(errs) > 0 {
+			t.Errorf("%s: partial pflow row should be accepted, got: %v", tc.name, errs)
+		}
+	}
+}
+
+// Typos are still caught in whatever was filled in.
+func TestPartialPflowRowStillCatchesTypos(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		row  RouterPflow
 		want string
 	}{
-		{"no device", RouterPflow{Src: "127.0.0.1", Dst: "10.0.0.5:9995", Proto: 10}, "pflow device is required"},
-		{"no src", RouterPflow{Device: "pflow0", Dst: "10.0.0.5:9995", Proto: 10}, "flow source is required"},
-		{"no dst", RouterPflow{Device: "pflow0", Src: "127.0.0.1", Proto: 10}, "flow destination is required"},
-		{"no proto", RouterPflow{Device: "pflow0", Src: "127.0.0.1", Dst: "10.0.0.5:9995"}, "must be 5 or 10"},
+		{"bad src", RouterPflow{Device: "pflow0", Src: "1.2.3.999"}, "is not an IP address"},
+		{"dst without port", RouterPflow{Device: "pflow0", Dst: "10.0.0.5"}, "must be host:port"},
+		{"bad version", RouterPflow{Device: "pflow0", Proto: 9}, "must be 5 or 10"},
 	} {
 		c := goodRouter()
 		c.Pflows = []RouterPflow{tc.row}
 		c.Normalize()
-		errs := strings.Join(c.Validate(), "\n")
+		errs := strings.Join(c.Validate(), "; ")
 		if !strings.Contains(errs, tc.want) {
 			t.Errorf("%s: want %q, got: %v", tc.name, tc.want, errs)
 		}
 	}
 
-	// ...but a complete one is fine, and version 5 is as valid as 10.
-	for _, proto := range []int{5, 10} {
-		c := goodRouter()
-		c.Pflows = []RouterPflow{{Device: "pflow0", Src: "127.0.0.1", Dst: "10.0.0.5:9995", Proto: proto}}
-		c.Normalize()
-		if errs := c.Validate(); len(errs) > 0 {
-			t.Errorf("proto %d: complete pflow row should be valid, got %v", proto, errs)
-		}
+	// Proto 0 means "not set" on a partial row and must not be an error.
+	c := goodRouter()
+	c.Pflows = []RouterPflow{{Device: "pflow0", Proto: 0}}
+	c.Normalize()
+	if errs := c.Validate(); len(errs) > 0 {
+		t.Errorf("proto 0 on a partial row should be fine, got %v", errs)
 	}
 }
 
@@ -646,3 +665,163 @@ func TestRouterFormSavesWithNoDhcpOrPflowRows(t *testing.T) {
 		t.Errorf("untouched blank rows became entries: %d dhcps, %d pflows", len(cfg.Dhcps), len(cfg.Pflows))
 	}
 }
+
+// Regression: the page used to carry a read-only "Interfaces on this box" table
+// *and* the editable interface rows, so every device was listed twice. The
+// detected state now hangs off the row it describes.
+func TestInterfacesAreListedOnce(t *testing.T) {
+	srv, _ := routerSrv(t)
+	r := httptest.NewRequest(http.MethodGet, "/router", nil)
+	r.SetBasicAuth("adm", "sekrit")
+	w := httptest.NewRecorder()
+	srv.auth(srv.handleRouter)(w, r)
+	body := w.Body.String()
+
+	if strings.Contains(body, "Interfaces on this box") {
+		t.Error("the separate detection table should be gone")
+	}
+	if n := strings.Count(body, "<h2>Interfaces"); n != 1 {
+		t.Errorf("found %d interface sections, want exactly 1", n)
+	}
+
+	// Every detected device must appear in exactly one device input.
+	hostIfs, err := ListHostIfaces()
+	if err != nil {
+		t.Skipf("no host interface list available here: %v", err)
+	}
+	for _, h := range hostIfs {
+		if !h.Assignable() {
+			continue
+		}
+		if n := strings.Count(body, `.device" value="`+h.Device+`"`); n != 1 {
+			t.Errorf("%s appears in %d device inputs, want 1", h.Device, n)
+		}
+	}
+}
+
+// The detected state has to travel with the row, since that is what replaced
+// the table.
+func TestDetectedStateIsAttachedToTheRow(t *testing.T) {
+	rows := seedRowsFrom(loadFixture(t), RouterConfig{})
+
+	var em0, blank *routerIfaceRow
+	for i := range rows {
+		switch rows[i].Device {
+		case "em0":
+			em0 = &rows[i]
+		case "":
+			if blank == nil {
+				blank = &rows[i]
+			}
+		}
+	}
+	if em0 == nil {
+		t.Fatal("em0 row missing")
+	}
+	if !em0.Known {
+		t.Error("em0 is a detected device and should be marked Known")
+	}
+	if !em0.Up || em0.Status != "active" || em0.Media != "1000baseT full-duplex" {
+		t.Errorf("em0 detected state = up:%v status:%q media:%q", em0.Up, em0.Status, em0.Media)
+	}
+	if !strings.Contains(em0.Addrs, "10.0.2.15") {
+		t.Errorf("em0 addrs = %q", em0.Addrs)
+	}
+	if !em0.Egress {
+		t.Error("em0 is in the egress group")
+	}
+
+	// A blank row has no device, so nothing to report about it.
+	if blank == nil {
+		t.Fatal("expected a blank row")
+	}
+	if blank.Known {
+		t.Error("a blank row must not claim detected state")
+	}
+}
+
+// withFixtureIfaces points the router page at captured ifconfig output, so the
+// rendering of detected state can be tested on a machine with no ifconfig.
+func withFixtureIfaces(t *testing.T) {
+	t.Helper()
+	ifs := loadFixture(t)
+	prev := listHostIfaces
+	listHostIfaces = func() ([]HostIface, error) { return ifs, nil }
+	t.Cleanup(func() { listHostIfaces = prev })
+}
+
+// The detected state has to actually reach the page, on the row it belongs to -
+// that is what replaced the separate table.
+func TestRowsRenderTheirDetectedState(t *testing.T) {
+	withFixtureIfaces(t)
+	srv, _ := routerSrv(t)
+
+	r := httptest.NewRequest(http.MethodGet, "/router", nil)
+	r.SetBasicAuth("adm", "sekrit")
+	w := httptest.NewRecorder()
+	srv.auth(srv.handleRouter)(w, r)
+	body := w.Body.String()
+
+	// em0's live facts, all on its row.
+	for _, want := range []string{"1000baseT full-duplex", "10.0.2.15/255.255.255.0", "egress"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("page missing detected detail %q", want)
+		}
+	}
+	// Exactly one interfaces section, and no resurrected table.
+	if n := strings.Count(body, "<h2>Interfaces"); n != 1 {
+		t.Errorf("%d interface sections, want 1", n)
+	}
+	if strings.Contains(body, "Interfaces on this box") {
+		t.Error("the separate detection table is back")
+	}
+	// Pseudo devices are named once, as a note - not as assignable rows.
+	if !strings.Contains(body, "Not assignable here") {
+		t.Error("missing the pseudo-device note")
+	}
+	for _, dev := range []string{"lo0", "enc0", "pflog0"} {
+		if !strings.Contains(body, dev) {
+			t.Errorf("pseudo device %s should still be mentioned", dev)
+		}
+		if strings.Contains(body, `.device" value="`+dev+`"`) {
+			t.Errorf("%s must not be offered as an assignable device", dev)
+		}
+	}
+	// Each assignable device appears in exactly one device input.
+	for _, dev := range []string{"em0", "em1"} {
+		if n := strings.Count(body, `.device" value="`+dev+`"`); n != 1 {
+			t.Errorf("%s in %d device inputs, want 1", dev, n)
+		}
+	}
+}
+
+// A failure to read the host's interfaces is reported but must not stop the
+// form from being usable.
+func TestDetectionFailureStillRendersAUsableForm(t *testing.T) {
+	prev := listHostIfaces
+	listHostIfaces = func() ([]HostIface, error) { return nil, errUnavailable }
+	t.Cleanup(func() { listHostIfaces = prev })
+
+	srv, _ := routerSrv(t)
+	r := httptest.NewRequest(http.MethodGet, "/router", nil)
+	r.SetBasicAuth("adm", "sekrit")
+	w := httptest.NewRecorder()
+	srv.auth(srv.handleRouter)(w, r)
+	body := w.Body.String()
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /router got %d", w.Code)
+	}
+	if !strings.Contains(body, "Could not read the interface list") {
+		t.Error("the failure should be reported on the page")
+	}
+	if !strings.Contains(body, `name="iface.0.device"`) {
+		t.Error("the form must still be usable so devices can be typed in")
+	}
+	if !strings.Contains(body, "Save router config") {
+		t.Error("the form must still be saveable")
+	}
+}
+
+// errUnavailable stands in for ifconfig being missing or unreadable.
+var errUnavailable = errors.New("ifconfig: not available")

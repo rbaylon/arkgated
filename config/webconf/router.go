@@ -99,7 +99,12 @@ func (c *RouterConfig) Normalize() {
 		i.Gateway = strings.TrimSpace(i.Gateway)
 		i.Ip = strings.TrimSpace(i.Ip)
 		i.Netmask = strings.TrimSpace(i.Netmask)
-		if i.Name == "" && i.Device == "" {
+		// The name alone decides whether this row is configured. The form
+		// renders one row per physical NIC with its device pre-filled, so
+		// "device set, no name" is the ordinary way of saying "leave this
+		// interface unconfigured" - it must not become a "name is required"
+		// error. A name with no device is still kept, so that does error.
+		if i.Name == "" {
 			continue
 		}
 		ifs = append(ifs, i)

@@ -8,11 +8,15 @@ import (
 	"strings"
 )
 
-// blankRows is how many empty rows each repeating section renders beyond what
-// is already configured. The form has no required client-side scripting, so
-// adding an interface means filling a blank row and saving; clearing a row's
-// name and device deletes it (see RouterConfig.Normalize).
-const blankRows = 2
+// blankRows is how many empty rows the DHCP and pflow sections render beyond
+// what is already configured, since neither is derived from hardware and they
+// would otherwise have nowhere to be added. One is enough: the form has no
+// required client-side scripting, so filling that row and saving adds the
+// entry and a fresh blank row comes back for the next one. Clearing a row's key
+// fields deletes it (see RouterConfig.Normalize).
+//
+// Interfaces deliberately get none - see seedRowsFrom.
+const blankRows = 1
 
 // routerConfigPath is where the router config lives, derived from the settings'
 // rundir. It is not a setting of its own: pfconfig.Init reads exactly
@@ -351,9 +355,17 @@ func seedRowsFrom(hostIfs []HostIface, cfg RouterConfig) []routerIfaceRow {
 		next++
 	}
 
-	for n := 0; n < blankRows; n++ {
-		rows = append(rows, routerIfaceRow{Idx: next})
-		next++
+	// No spare interface rows: the list is exactly this box's physical NICs
+	// (plus anything already configured on a device that is no longer present,
+	// so it can still be seen and removed). Two NICs means two rows. Adding an
+	// interface that no NIC corresponds to is not a thing you can do here -
+	// vlan and pppac interfaces come from srvcman, not from this file.
+	//
+	// The one exception keeps the form usable: if there is nothing to show at
+	// all - no config yet and ifconfig unreadable - render a single empty row
+	// so a device name can still be typed in.
+	if len(rows) == 0 {
+		rows = append(rows, routerIfaceRow{Idx: 0})
 	}
 	return rows
 }

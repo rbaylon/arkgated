@@ -149,7 +149,7 @@ footer { color: var(--muted); font-size: 12px; margin-top: 24px; }
 
     <section>
       <h2>Interfaces</h2>
-      <p class="hint">Devices found on this box by <code class="mono">ifconfig -a</code> are pre-filled below, with their live state shown on each row. Clear a row's name and device to delete it. Exactly one interface is the default route — that is the one <code class="mono">mygate</code> and <code class="mono">resolv.conf</code> are written from.</p>
+      <p class="hint">One row per physical interface on this box, from <code class="mono">ifconfig -a</code>, with its live state shown on the row. Give a row a <strong>name</strong> to configure that interface; leave the name blank to leave it unconfigured. Exactly one configured interface is the default route — that is the one <code class="mono">mygate</code> and <code class="mono">resolv.conf</code> are written from.</p>
       {{if .DetectErr}}<div class="note warn">Could not read the interface list: <span class="mono">{{.DetectErr}}</span><br>Type device names in by hand.</div>{{end}}
       {{range .Ifaces}}
       <div class="row">
@@ -207,7 +207,7 @@ footer { color: var(--muted); font-size: 12px; margin-top: 24px; }
 
     <section>
       <h2>DHCP scopes <span class="opt">optional</span></h2>
-      <p class="hint">Only used to seed srvcman when this router first enrolls &mdash; srvcman's dhcp module owns <code class="mono">dhcpd.conf</code> after that, and arkgated just fetches the rendered text from it. Leave this empty and manage scopes in srvcman. Nothing here is required; whatever you do fill in is only checked for typos. Clear a row's interface, subnet and range to delete it.</p>
+      <p class="hint">Only used to seed srvcman when this router first enrolls &mdash; srvcman's dhcp module owns <code class="mono">dhcpd.conf</code> after that, and arkgated just fetches the rendered text from it. Leave this empty and manage scopes in srvcman. Nothing here is required; whatever you do fill in is only checked for typos. Fill the blank row to add a scope and another appears after saving; clear a row's interface, subnet and range to delete it.</p>
       {{range .Dhcps}}
       <div class="row">
         <h3>Scope {{.Idx}}</h3>
@@ -273,7 +273,7 @@ footer { color: var(--muted); font-size: 12px; margin-top: 24px; }
     <button type="submit">Save router config</button>
   </form>
 
-  <footer>Two blank rows are offered in each section; save and they reappear, so there is no need to add rows before filling them. Every value here is read by arkgated at startup and sent to srvcman on enrollment.</footer>
+  <footer>Interfaces are listed one per physical NIC. DHCP and pflow each offer one blank row: fill it, save, and a fresh one appears for the next entry. Every value here is read by arkgated at startup and sent to srvcman on enrollment.</footer>
 </div>
 </body>
 </html>

@@ -731,12 +731,9 @@ func TestDetectedStateIsAttachedToTheRow(t *testing.T) {
 		t.Error("em0 is in the egress group")
 	}
 
-	// A blank row has no device, so nothing to report about it.
-	if blank == nil {
-		t.Fatal("expected a blank row")
-	}
-	if blank.Known {
-		t.Error("a blank row must not claim detected state")
+	// There are no spare rows any more, so there is no blank row to find.
+	if blank != nil {
+		t.Errorf("unexpected blank row at index %d", blank.Idx)
 	}
 }
 
@@ -825,3 +822,156 @@ func TestDetectionFailureStillRendersAUsableForm(t *testing.T) {
 
 // errUnavailable stands in for ifconfig being missing or unreadable.
 var errUnavailable = errors.New("ifconfig: not available")
+
+// The interface list is exactly the box's physical NICs: two NICs, two rows,
+// no spares. The fixture has em0 and em1 assignable plus lo0/enc0/pflog0.
+func TestOneInterfaceRowPerPhysicalNIC(t *testing.T) {
+	rows := seedRowsFrom(loadFixture(t), RouterConfig{})
+
+	if len(rows) != 2 {
+		var got []string
+		for _, r := range rows {
+			got = append(got, r.Device)
+		}
+		t.Fatalf("got %d rows %v, want exactly 2 (em0, em1)", len(rows), got)
+	}
+	if rows[0].Device != "em0" || rows[1].Device != "em1" {
+		t.Errorf("rows = %q, %q; want em0, em1", rows[0].Device, rows[1].Device)
+	}
+	for _, r := range rows {
+		if r.Device == "" {
+			t.Error("no row should be blank")
+		}
+	}
+}
+
+// Already-configured interfaces are not duplicated by the detected ones, and
+// still produce no spares.
+func TestConfiguredInterfacesProduceNoExtraRows(t *testing.T) {
+	cfg := RouterConfig{Ifaces: []RouterIface{
+		{Name: "wan", Device: "em0", Type: "external", Default: true, Ip: "10.0.2.15", Netmask: "255.255.255.0", Gateway: "10.0.2.2"},
+		{Name: "lan", Device: "em1", Type: "internal", Ip: "172.16.0.1", Netmask: "255.255.0.0"},
+	}}
+	rows := seedRowsFrom(loadFixture(t), cfg)
+	if len(rows) != 2 {
+		t.Fatalf("got %d rows, want 2", len(rows))
+	}
+	if rows[0].Name != "wan" || rows[1].Name != "lan" {
+		t.Errorf("configured names lost: %q, %q", rows[0].Name, rows[1].Name)
+	}
+}
+
+// An interface configured on a device that is no longer present must still be
+// shown, or it could never be corrected or removed.
+func TestConfiguredInterfaceOnMissingDeviceIsStillShown(t *testing.T) {
+	cfg := RouterConfig{Ifaces: []RouterIface{
+		{Name: "wan", Device: "igc9", Type: "external", Default: true, Ip: "10.0.0.1", Netmask: "255.255.255.0", Gateway: "10.0.0.254"},
+	}}
+	rows := seedRowsFrom(loadFixture(t), cfg)
+
+	// The stale one, plus the two NICs that do exist.
+	if len(rows) != 3 {
+		t.Fatalf("got %d rows, want 3 (igc9 + em0 + em1)", len(rows))
+	}
+	if rows[0].Device != "igc9" || rows[0].Known {
+		t.Errorf("stale row = %q known=%v; want igc9 not marked detected", rows[0].Device, rows[0].Known)
+	}
+}
+
+// With nothing configured and no interface list available, one empty row is
+// still rendered - otherwise the form could not be filled in at all.
+func TestNoDetectionStillGivesOneRow(t *testing.T) {
+	rows := seedRowsFrom(nil, RouterConfig{})
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1 fallback row", len(rows))
+	}
+	if rows[0].Device != "" || rows[0].Known {
+		t.Errorf("fallback row should be empty, got %+v", rows[0])
+	}
+}
+
+// Leaving a pre-filled NIC row's name blank means "do not configure this
+// interface" - it must not be a validation error, since every NIC now gets a
+// row whether you want it configured or not.
+func TestUnnamedPrefilledRowIsDroppedNotRejected(t *testing.T) {
+	srv, path := routerSrv(t)
+	withFixtureIfaces(t)
+
+	form := routerForm("em0", "em1")
+	// Row 1 keeps its detected device but gets no name: em1 stays unconfigured.
+	form.Set("iface.1.name", "")
+	w := postRouter(t, srv, form)
+	body := w.Body.String()
+	if !strings.Contains(body, "Saved.") {
+		t.Fatalf("an unnamed row should be dropped, not rejected:\n%s", body)
+	}
+	if strings.Contains(body, "name is required") {
+		t.Error("leaving a pre-filled device unnamed must not error")
+	}
+
+	cfg, _, err := LoadRouterConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Ifaces) != 1 || cfg.Ifaces[0].Name != "wan" {
+		t.Fatalf("want only wan configured, got %+v", cfg.Ifaces)
+	}
+}
+
+// A name with no device is a genuine mistake and must still be reported.
+func TestNamedRowWithoutDeviceStillErrors(t *testing.T) {
+	c := goodRouter()
+	c.Ifaces[1].Device = ""
+	c.Normalize()
+	if !strings.Contains(strings.Join(c.Validate(), "; "), "device is required") {
+		t.Errorf("a named row with no device should error, got %v", c.Validate())
+	}
+}
+
+// Row counts are the whole point of this layout: one row per NIC, and exactly
+// one spare row for each of the two optional sections.
+func TestRenderedRowCounts(t *testing.T) {
+	withFixtureIfaces(t)
+	srv, _ := routerSrv(t)
+
+	render := func() string {
+		r := httptest.NewRequest(http.MethodGet, "/router", nil)
+		r.SetBasicAuth("adm", "sekrit")
+		w := httptest.NewRecorder()
+		srv.auth(srv.handleRouter)(w, r)
+		return w.Body.String()
+	}
+	// 8 inputs per interface row, 6 per dhcp row, 4 per pflow row.
+	counts := func(body string) (ifaces, dhcps, pflows int) {
+		return strings.Count(body, `name="iface.`) / 8,
+			strings.Count(body, `name="dhcp.`) / 6,
+			strings.Count(body, `name="pflow.`) / 4
+	}
+
+	// Nothing configured: 2 NICs, 1 blank dhcp, 1 blank pflow.
+	i, d, f := counts(render())
+	if i != 2 || d != 1 || f != 1 {
+		t.Errorf("empty config rendered %d iface / %d dhcp / %d pflow rows, want 2/1/1", i, d, f)
+	}
+
+	// After configuring both NICs and one scope: still 2 NICs, and one fresh
+	// blank row after the saved scope.
+	form := routerForm("em0", "em1")
+	form.Set("dhcp.0.type", "lan")
+	form.Set("dhcp.0.subnet", "172.16.0.0")
+	form.Set("dhcp.0.netmask", "255.255.0.0")
+	form.Set("dhcp.0.range", "172.16.1.1 172.16.9.255")
+	if w := postRouter(t, srv, form); !strings.Contains(w.Body.String(), "Saved.") {
+		t.Fatalf("save failed:\n%s", w.Body.String())
+	}
+	i, d, f = counts(render())
+	if i != 2 {
+		t.Errorf("after saving, %d interface rows, want 2", i)
+	}
+	if d != 2 {
+		t.Errorf("after saving one scope, %d dhcp rows, want 2 (the saved one + one blank)", d)
+	}
+	if f != 1 {
+		t.Errorf("%d pflow rows, want 1 blank", f)
+	}
+}

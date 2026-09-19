@@ -455,7 +455,7 @@ func TestEnsureWebCertGeneratesThenReuses(t *testing.T) {
 	crt := filepath.Join(dir, "webconf.crt")
 	key := filepath.Join(dir, "webconf.key")
 
-	ci, err := ensureWebCert(crt, key, "0.0.0.0:8080")
+	ci, err := ensureWebCert(crt, key, "0.0.0.0:1443")
 	if err != nil {
 		t.Fatalf("ensureWebCert: %v", err)
 	}
@@ -485,7 +485,7 @@ func TestEnsureWebCertGeneratesThenReuses(t *testing.T) {
 	}
 
 	// A second call must reuse what is on disk, not mint a new key.
-	again, err := ensureWebCert(crt, key, "0.0.0.0:8080")
+	again, err := ensureWebCert(crt, key, "0.0.0.0:1443")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -540,7 +540,7 @@ func TestInstalledCertIsNeverOverwritten(t *testing.T) {
 	crt := filepath.Join(dir, "c.crt")
 	key := filepath.Join(dir, "c.key")
 
-	if _, err := ensureWebCert(crt, key, "127.0.0.1:8080"); err != nil {
+	if _, err := ensureWebCert(crt, key, "127.0.0.1:1443"); err != nil {
 		t.Fatal(err)
 	}
 	before, err := os.ReadFile(crt)
@@ -549,7 +549,7 @@ func TestInstalledCertIsNeverOverwritten(t *testing.T) {
 	}
 
 	for i := 0; i < 3; i++ {
-		if _, err := ensureWebCert(crt, key, "127.0.0.1:8080"); err != nil {
+		if _, err := ensureWebCert(crt, key, "127.0.0.1:1443"); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -615,5 +615,70 @@ func TestValidateRejectsSharedOrMissingWebPair(t *testing.T) {
 		if !strings.Contains(body, "Nothing was saved") || !strings.Contains(body, tc.want) {
 			t.Errorf("%s: expected rejection mentioning %q, got:\n%s", tc.name, tc.want, body)
 		}
+	}
+}
+
+func TestDefaultWebAddrBindsAllAddresses(t *testing.T) {
+	d := Defaults()
+	if d.WebAddr != "0.0.0.0:1443" {
+		t.Errorf("WebAddr default = %q, want 0.0.0.0:1443", d.WebAddr)
+	}
+	if d.LoopbackWeb() {
+		t.Error("the default bind is not loopback-only")
+	}
+	// Still a valid setting, and still HTTPS-only with a mandatory password -
+	// widening the bind must not have loosened anything else.
+	d.Creds = "x"
+	if errs := d.Validate(); len(errs) > 0 {
+		t.Errorf("defaults should validate, got %v", errs)
+	}
+}
+
+// With a wildcard bind - now the default - the certificate has to cover the
+// address an admin actually types, which is the box's own LAN address rather
+// than 127.0.0.1. certNames enumerates the host's unicast addresses for that.
+func TestWildcardBindCertCoversLocalAddresses(t *testing.T) {
+	dir := t.TempDir()
+	crt := filepath.Join(dir, "c.crt")
+	key := filepath.Join(dir, "c.key")
+
+	if _, err := ensureWebCert(crt, key, "0.0.0.0:1443"); err != nil {
+		t.Fatal(err)
+	}
+	pemBytes, err := os.ReadFile(crt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	block, _ := pem.Decode(pemBytes)
+	leaf, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Find a real non-loopback address on this machine and require the cert
+	// to cover it. Skip only if the machine genuinely has none.
+	var want net.IP
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range addrs {
+		if n, ok := a.(*net.IPNet); ok && n.IP.IsGlobalUnicast() && n.IP.To4() != nil {
+			want = n.IP
+			break
+		}
+	}
+	if want == nil {
+		t.Skip("no non-loopback IPv4 address on this host to check against")
+	}
+
+	pool := x509.NewCertPool()
+	pool.AddCert(leaf)
+	if _, err := leaf.Verify(x509.VerifyOptions{DNSName: want.String(), Roots: pool}); err != nil {
+		t.Errorf("cert does not cover this host's own address %s: %v", want, err)
+	}
+	// Loopback must keep working too, for an ssh-tunnelled admin.
+	if _, err := leaf.Verify(x509.VerifyOptions{DNSName: "127.0.0.1", Roots: pool}); err != nil {
+		t.Errorf("cert should still cover loopback: %v", err)
 	}
 }

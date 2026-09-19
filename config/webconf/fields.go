@@ -151,7 +151,7 @@ func fields() []field {
 		{
 			Key:     "webaddr",
 			Label:   "Configurator listen address",
-			Help:    "host:port this page is served on. Defaults to loopback only - reach it over an ssh tunnel rather than widening it.",
+			Help:    "host:port this page is served on. Defaults to every address: the generated pf.conf blocks inbound by default and has no pass rule for this port, so pf decides who can reach it. Narrow it here if you would rather not rely on that.",
 			Group:   groupWeb,
 			Kind:    kindText,
 			Restart: true,

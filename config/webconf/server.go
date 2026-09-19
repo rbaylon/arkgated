@@ -19,8 +19,10 @@ import (
 //
 // Editing these settings is equivalent to root on this box - rundir and
 // tlsclientca in particular decide what config gets generated and who is
-// allowed to make the daemon shell out - so the password is mandatory, the
-// listener defaults to loopback, and it is always HTTPS.
+// allowed to make the daemon shell out - so the password is mandatory and it
+// is always HTTPS. The listener binds all addresses; on an arkgate box pf is
+// the outer boundary, and the generated pf.conf blocks inbound by default with
+// no pass rule for this port.
 //
 // Its TLS material is its own (WebCert/WebKey), never the mTLS pair the IPC
 // listener uses. Those two serve unrelated purposes: the mTLS pair proves
@@ -103,7 +105,11 @@ func (srv *Server) ListenAndServe(ctx context.Context) error {
 	}
 	log.Printf("Web configurator certificate: %s", ci.Summary())
 	if ci.SelfSigned && !cur.LoopbackWeb() {
-		log.Printf("The configurator is reachable off-box with a self-signed certificate - your browser will warn. Check the SHA-256 above matches before accepting it, or install your own certificate at %s.", cur.WebCert)
+		// Informational, not a complaint: binding every address is the
+		// default and pf gates it. But the certificate is self-signed, so the
+		// browser warning on first visit is expected and the fingerprint
+		// above is the only way to tell it apart from an interception.
+		log.Printf("Browsers will warn on first visit because that certificate is self-signed; compare the SHA-256 above before accepting it, or install your own certificate at %s.", cur.WebCert)
 	}
 	if ci.Expiring() {
 		log.Printf("WARNING: the configurator certificate expires %s and nothing rotates it automatically - replace %s, or delete it to have a fresh self-signed pair generated on the next start.", ci.NotAfter.Format("2006-01-02"), cur.WebCert)

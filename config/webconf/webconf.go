@@ -49,14 +49,28 @@ type Settings struct {
 // saves the form untouched gets exactly the daemon that running ./arkgated
 // with no arguments used to produce.
 //
-// The WebAddr/WebCert/WebKey group is new. The configurator runs no commands
-// itself, but it edits the settings of a root daemon that shells out to
-// anything it is told to, so it binds loopback only until someone says
-// otherwise, and it is always HTTPS. Its key pair is deliberately its own,
-// not the mTLS pair above: that one authenticates srvcman to this daemon,
-// this one authenticates this daemon to an admin's browser. Different peers,
-// different rotation schedules, different consequences if one leaks - see
-// ensureWebCert, which generates a self-signed pair here on first start.
+// The WebAddr/WebCert/WebKey group is new. The configurator binds all
+// addresses, because on an arkgate box pf is the boundary that matters: the
+// pf.conf this daemon generates is "block all" with explicit inbound passes
+// (22, DNS, the portal ports, bootp) and none for this port, so the listener
+// is not reachable from anywhere pf does not allow. It is always HTTPS and
+// always password-protected regardless.
+//
+// The port is 1443 rather than anything in the 8080 range on purpose: the
+// generated subscriber plan rules pass "to any port { 5060, 8080 }", and
+// because that is "to any" it includes the router itself - so a configurator
+// on 8080 would be reachable by any subscriber in a plan table, with pf
+// passing it rather than blocking it. Nothing in the generated ruleset passes
+// 1443, so it stays behind the default block. Check config/pf/pf.go before
+// changing this default.
+//
+// Its key pair is deliberately its own, not the mTLS pair above: that one
+// authenticates srvcman to this daemon, this one authenticates this daemon to
+// an admin's browser. Different peers, different rotation schedules, different
+// consequences if one leaks - see ensureWebCert, which generates a self-signed
+// pair here on first start. Binding 0.0.0.0 is also why ensureWebCert
+// enumerates this host's real addresses into the certificate's SANs: an admin
+// browses to the box's LAN address, not to 127.0.0.1.
 func Defaults() Settings {
 	return Settings{
 		SocketFile:  "/tmp/arkgated.sock",
@@ -69,7 +83,7 @@ func Defaults() Settings {
 		TLSClientCA: "./rundir/ca.crt",
 		RunDir:      "./rundir/",
 		Creds:       "./rundir/",
-		WebAddr:     "127.0.0.1:8080",
+		WebAddr:     "0.0.0.0:1443",
 		WebCert:     filepath.Join(filepath.Dir(Path), "webconf.crt"),
 		WebKey:      filepath.Join(filepath.Dir(Path), "webconf.key"),
 	}
@@ -177,9 +191,9 @@ func (s *Settings) Validate() []string {
 	return errs
 }
 
-// LoopbackWeb reports whether WebAddr binds loopback only. Off-loopback the
-// configurator's certificate is what an admin has to verify, so this decides
-// whether startup bothers logging the fingerprint.
+// LoopbackWeb reports whether WebAddr binds loopback only. Off-loopback -
+// which is the default - the certificate is what an admin has to verify by
+// hand, so this decides whether startup bothers pointing at the fingerprint.
 func (s *Settings) LoopbackWeb() bool {
 	host, _, err := net.SplitHostPort(s.WebAddr)
 	if err != nil {

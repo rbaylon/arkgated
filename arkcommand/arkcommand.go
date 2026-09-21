@@ -1,8 +1,10 @@
 package Arkcommand
 
 import (
+	"context"
 	"log"
 	"os/exec"
+	"time"
 )
 
 // WantOutput, when set by the client, tells the connection handler in
@@ -73,8 +75,46 @@ func IsConcurrent(name string) bool {
 	return concurrentCommands[name]
 }
 
+// newTrackedCmd builds the exec.Cmd for ac, bound to ctx so that whenever ctx
+// is done - because parentCtx was cancelled (ClearActive, or the caller's own
+// connection going away) or because RunCtx/RunWithOutputCtx's own cmdTimeout
+// elapsed - the command's *whole process group* is killed, not just the
+// direct child. exec.CommandContext's default Cancel behavior is a plain
+// cmd.Process.Kill() on the immediate child only; for something like
+// ActiveRoutes' "/bin/sh -c \"netstat -rn | grep UGHS\"", that kills the
+// shell and leaves netstat/grep running as orphans. newProcAttr (see
+// procattr_unix.go) puts the whole tree in one process group so
+// killProcessGroup's -pid kill takes all of it at once. WaitDelay bounds how
+// long Output/CombinedOutput will keep waiting after Cancel fires before
+// giving up and returning anyway - defense in depth against a process that
+// somehow ignores SIGKILL, so that case can't reintroduce the hang this
+// whole mechanism exists to prevent.
+func newTrackedCmd(ctx context.Context, ac *Arkcmd) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, ac.Cmd, ac.Opts...)
+	cmd.SysProcAttr = newProcAttr()
+	cmd.Cancel = func() error { return killProcessGroup(cmd) }
+	cmd.WaitDelay = 5 * time.Second
+	return cmd
+}
+
+// Run is RunCtx against a background context - the command still gets
+// cmdTimeout's automatic bound, it just isn't registered anywhere an admin
+// could cancel it early or see it in a Snapshot. Prefer RunCtx with a
+// context from Begin (see registry.go) for anything reached over IPC; this
+// exists for callers (tests, anything run outside the connection-handling
+// path) that don't need registry tracking.
 func (ac *Arkcmd) Run() (int, error) {
-	cmd := exec.Command(ac.Cmd, ac.Opts...)
+	return ac.RunCtx(context.Background())
+}
+
+// RunCtx runs ac, killing it (whole process group) if parentCtx is
+// cancelled or if cmdTimeout elapses first - see newTrackedCmd and the
+// cmdTimeout doc comment in registry.go for why neither of those used to
+// exist.
+func (ac *Arkcmd) RunCtx(parentCtx context.Context) (int, error) {
+	ctx, cancel := context.WithTimeout(parentCtx, cmdTimeout)
+	defer cancel()
+	cmd := newTrackedCmd(ctx, ac)
 	out, err := cmd.Output()
 	if !quietCommands[ac.Name] {
 		log.Println(string(out))
@@ -85,18 +125,27 @@ func (ac *Arkcmd) Run() (int, error) {
 	return 0, nil
 }
 
-// RunWithOutput runs the command and always returns its captured output
+// RunWithOutput is RunWithOutputCtx against a background context - see Run's
+// comment for why you'd want RunWithOutputCtx instead over IPC.
+func (ac *Arkcmd) RunWithOutput() (int, []byte) {
+	return ac.RunWithOutputCtx(context.Background())
+}
+
+// RunWithOutputCtx runs the command and always returns its captured output
 // (stdout+stderr combined), even when it exits non-zero - callers like
 // diagnostics (ping to an unreachable host, e.g.) need the output text
 // precisely in that case, not just a bare failure code. Exit code is the
 // process's real exit code when available, 1 otherwise (e.g. the binary
-// itself couldn't be started).
-func (ac *Arkcmd) RunWithOutput() (int, []byte) {
+// itself couldn't be started, or it was killed - see newTrackedCmd - because
+// parentCtx was cancelled or cmdTimeout elapsed).
+func (ac *Arkcmd) RunWithOutputCtx(parentCtx context.Context) (int, []byte) {
 	quiet := quietCommands[ac.Name]
 	if !quiet {
 		log.Println("running:", ac.Cmd)
 	}
-	cmd := exec.Command(ac.Cmd, ac.Opts...)
+	ctx, cancel := context.WithTimeout(parentCtx, cmdTimeout)
+	defer cancel()
+	cmd := newTrackedCmd(ctx, ac)
 	out, err := cmd.CombinedOutput()
 	if !quiet {
 		log.Println(string(out))

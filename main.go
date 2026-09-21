@@ -36,6 +36,56 @@ type joborder struct {
 	conn net.Conn
 }
 
+// maxInFlightConns caps how many accepted connections may be inside
+// handleConn at once, across both listeners (Unix socket + mTLS), before
+// any of them have necessarily sent a valid command. This is the outermost
+// of the connection-handling bounds - see handleConn's own comment for how
+// it relates to connDeadline and Arkcommand's own maxActiveCmds. 1000 is
+// generous for what this daemon actually serves (dozens to low hundreds of
+// monitored gateways, each holding at most one connection open briefly per
+// health-check tick) with real headroom before legitimate traffic could
+// ever approach it.
+const maxInFlightConns = 1000
+
+// connSem is the semaphore maxInFlightConns enforces: a buffered channel
+// used purely for its capacity, acquired (non-blocking, via acquireSlot) at
+// the top of handleConn and released when it returns.
+var connSem = make(chan struct{}, maxInFlightConns)
+
+// acquireSlot tries to reserve a slot in sem without blocking, returning a
+// release func and true if it did, or (nil, false) immediately if sem is
+// already full. Split out from handleConn so the cap-enforcement logic
+// itself - acquire succeeds up to capacity, fails immediately past it,
+// release frees a slot for the next caller - can be tested directly against
+// a small channel, rather than needing to actually open maxInFlightConns
+// (1000) real connections to prove the 1001st is rejected.
+func acquireSlot(sem chan struct{}) (release func(), ok bool) {
+	select {
+	case sem <- struct{}{}:
+		return func() { <-sem }, true
+	default:
+		return nil, false
+	}
+}
+
+// connDeadline bounds the total lifetime of one connection inside
+// handleConn - see the comment where it's applied (conn.SetDeadline). It is
+// deliberately sized off Arkcommand.CmdTimeout rather than being an
+// independent number, so the two can't drift apart: 30s to actually receive
+// the command payload (callers send it immediately after connecting, so
+// this is generous slack, not an expected wait) + CmdTimeout itself, for a
+// command that legitimately runs the whole way to its own limit before
+// Arkcommand kills it + 30s margin to write the reply back. If a command
+// were ever cut off by connDeadline before Arkcommand's own timeout fired,
+// that would be a bug in this sum, not in the command.
+//
+// A var (computed once, at package init, from Arkcommand.CmdTimeout's value
+// at that time) rather than a const, purely because it's derived from
+// another package's var - not because it's meant to change at runtime; only
+// tests override it, to prove the deadline is actually enforced without
+// waiting out a real ~2.5 minutes.
+var connDeadline = 30*time.Second + Arkcommand.CmdTimeout + 30*time.Second
+
 // parseFlags reads the configurator credentials. Both are also settable as
 // ARKGATED_WEBADMIN/ARKGATED_WEBPASS or in a -config file (namsral/flag), and
 // one of those is the right way to supply the password in production - a
@@ -134,9 +184,27 @@ type outputResponse struct {
 // strictly ordered) and the connection handler's direct call for
 // Arkcommand.IsConcurrent commands (which skip the shared queue entirely
 // and just run here, in their own connection's goroutine).
+//
+// Every command that reaches here goes through Arkcommand.Begin/End, which
+// is what makes it visible to Snapshot/ClearActive (see
+// arkcommand/registry.go) and what gives it cmdTimeout's automatic bound -
+// see that file's cmdTimeout doc comment for why neither of those existed
+// before and what that cost. Begin can refuse (maxActiveCmds already
+// reached): that is treated as an ordinary failure, not a panic or a silent
+// drop, so the caller gets a clear NOK instead of a connection that just
+// hangs until its own deadline.
 func runJob(cmd Arkcommand.Arkcmd, conn net.Conn) {
+	id, ctx, ok := Arkcommand.Begin(cmd, remoteAddr(conn))
+	if !ok {
+		log.Printf("rejecting %s: %d commands already running (cap reached)", cmd.Name, Arkcommand.MaxActiveCmds)
+		conn.Write([]byte("NOK"))
+		conn.Close()
+		return
+	}
+	defer Arkcommand.End(id)
+
 	if cmd.WantOutput {
-		code, out := cmd.RunWithOutput()
+		code, out := cmd.RunWithOutputCtx(ctx)
 		resp := outputResponse{OK: code == 0, Output: string(out)}
 		if code != 0 {
 			resp.Error = fmt.Sprintf("%s exited %d", cmd.Cmd, code)
@@ -149,7 +217,7 @@ func runJob(cmd Arkcommand.Arkcmd, conn net.Conn) {
 			conn.Write(respBytes)
 		}
 	} else {
-		_, err := cmd.Run()
+		_, err := cmd.RunCtx(ctx)
 		if err != nil {
 			log.Println(err)
 			conn.Write([]byte("NOK"))
@@ -158,6 +226,19 @@ func runJob(cmd Arkcommand.Arkcmd, conn net.Conn) {
 		}
 	}
 	conn.Close()
+}
+
+// remoteAddr is conn.RemoteAddr() as a string, or "" if conn is nil or has
+// none (a connected net.Conn always should, but this is only ever used for
+// a diagnostic label on a registry entry - never worth a nil panic over).
+func remoteAddr(conn net.Conn) string {
+	if conn == nil {
+		return ""
+	}
+	if a := conn.RemoteAddr(); a != nil {
+		return a.String()
+	}
+	return ""
 }
 
 func worker(job <-chan joborder, ctx context.Context) {
@@ -270,6 +351,42 @@ func run(store *webconf.Store, out io.Writer, sockets []net.Listener, ctx contex
 	// command means the same thing regardless of whether it arrived over
 	// the local Unix socket or the remote mTLS listener.
 	handleConn := func(conn net.Conn) {
+		// Two independent bounds against a connection that never sends
+		// anything (or a slow/stuck one) piling up resources - see the
+		// review that led here: neither existed before, and the mTLS
+		// listener made it worse than it looks, since tls.Conn's handshake
+		// is lazy on first Read/Write - a bare TCP connect that never sends
+		// a ClientHello blocked this same Read forever, no client cert
+		// needed at all.
+		//
+		// connSem caps how many connections may be inside handleConn at
+		// once, across both listeners, regardless of whether they've even
+		// sent a valid command yet - this is what actually bounds peak
+		// resource use during a flood, since connDeadline only bounds how
+		// long any *one* stuck connection lives, not how many can exist
+		// simultaneously before hitting that deadline. A full semaphore
+		// means something is already wrong, so this rejects immediately
+		// (closes without reading) rather than queuing behind it.
+		release, ok := acquireSlot(connSem)
+		if !ok {
+			log.Printf("rejecting connection from %s: %d connections already in flight", remoteAddr(conn), maxInFlightConns)
+			conn.Close()
+			return
+		}
+		defer release()
+
+		// connDeadline is one absolute deadline covering the rest of this
+		// connection's life: SetDeadline (not SetReadDeadline) so it bounds
+		// both this initial Read *and* every later Write of a reply below,
+		// with a single call - Go's net.Conn deadlines are absolute, not
+		// per-call timers, so they don't need re-arming between the two.
+		// Sized as read-the-command + cmdTimeout's own worst case (a
+		// command that runs the full 90s before Arkcommand itself kills it)
+		// + margin for writing the reply, so a legitimately slow-but-bounded
+		// command is never cut off by this outer deadline before its own
+		// inner one would have fired anyway.
+		conn.SetDeadline(time.Now().Add(connDeadline))
+
 		// Snapshot per connection rather than per process, so maxbuff and
 		// srvcurl edits made in the web configurator take effect on the
 		// next command instead of only after a restart.
@@ -342,6 +459,41 @@ func run(store *webconf.Store, out io.Writer, sockets []net.Listener, ctx contex
 				conn.Write([]byte("NOK"))
 			} else {
 				conn.Write([]byte("OK"))
+			}
+			conn.Close()
+			return
+		case "ActiveHealthChecks":
+			// Administrative query, not an exec'd command - never reaches
+			// Arkcommand.Run/RunCtx at all, so it's answered here rather
+			// than falling through to IsConcurrent/the worker queue.
+			// Filtered to "HealthPing" specifically (what this command
+			// name promises), with TotalCount in the response for context
+			// on how much of the daemon's overall in-flight budget that
+			// is. See arkcommand/registry.go's Snapshot.
+			b, jerr := json.Marshal(Arkcommand.Snapshot("HealthPing"))
+			if jerr != nil {
+				log.Println("marshaling ActiveHealthChecks response:", jerr)
+				conn.Write([]byte("NOK"))
+			} else {
+				conn.Write(b)
+			}
+			conn.Close()
+			return
+		case "ClearHealthChecks":
+			// Administrative action: cancels every currently-tracked
+			// HealthPing (killing its process group - see
+			// Arkcommand.ClearActive/newTrackedCmd) and reports how many.
+			// Same trust model as every other Arkcmd: whatever gates this
+			// transport (Unix socket permissions, or the mTLS client
+			// cert) is the only thing standing between a caller and this
+			// action, same as for an arbitrary exec.
+			n := Arkcommand.ClearActive("HealthPing")
+			b, jerr := json.Marshal(map[string]int{"cleared": n})
+			if jerr != nil {
+				log.Println("marshaling ClearHealthChecks response:", jerr)
+				conn.Write([]byte("NOK"))
+			} else {
+				conn.Write(b)
 			}
 			conn.Close()
 			return

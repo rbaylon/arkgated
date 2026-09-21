@@ -67,6 +67,8 @@ var concurrentCommands = map[string]bool{
 	"ActiveRoutes":   true,
 	"SystemInfo":     true,
 	"TunnelPs":       true,
+	"FdSysctl":       true,
+	"FdFstat":        true,
 }
 
 // IsConcurrent reports whether name is safe to run outside the serialized

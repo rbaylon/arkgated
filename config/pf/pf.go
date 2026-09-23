@@ -245,6 +245,7 @@ queue  ssh_bulk parent apps bandwidth 5M max 5M
 block all
 block in quick from <bad_hosts>
 block in quick from <martians>
+pass quick inet proto icmp icmp-type unreach code needfrag
 `)
 	var defaultqrules string
 	for _, v := range c.Ifaces {

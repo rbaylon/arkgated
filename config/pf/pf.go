@@ -190,7 +190,39 @@ queue  ssh_interactive parent apps bandwidth 5M min 2M
 queue  ssh_bulk parent apps bandwidth 5M max 5M
 # insert new queueus after this line 
 `, defiface)
-	matches := "match in all scrub (no-df random-id max-mss 1440)\n"
+	// no-df/max-mss are the DF-clearing and TCP MSS clamping mitigations for
+	// the classic tunnel-MTU/PMTUD blackhole problem (see e.g. Cisco's PMTUD
+	// writeup on GRE/IPsec): a packet too big for some link on the path gets
+	// dropped instead of fragmented, and if ICMP is blocked anywhere on the
+	// path the sender never finds out. That is exactly the wrong thing to do
+	// to a subscriber's own VPN traffic passing through this box, though:
+	// no-df forces fragmentation of an already-encrypted ESP/GRE payload
+	// (expensive to reassemble, and some peers handle it badly - itself a
+	// common cause of "VPN is slow through this firewall"), and max-mss only
+	// ever touches TCP anyway, so it does nothing for the UDP-based VPNs
+	// below and isn't worth the risk of applying to the TCP ones. So general
+	// traffic gets the full treatment; IPsec/GRE/OpenVPN/WireGuard get only
+	// random-id (IP-ID anti-fingerprinting, unrelated to fragmentation) -
+	// PMTUD for that traffic is left to work the normal way (which needs
+	// ICMP type 3 code 4 actually passed through - see the custom Rules
+	// section below for where to add that exception if it's still blocked).
+	//
+	// proto {tcp, udp} on the first rule is what excludes ESP (50), AH (51)
+	// and GRE (47) - they're simply never tcp or udp, so they never match it
+	// at all, no negation needed. IKE/NAT-T and the two UDP-based VPNs *do*
+	// match on protocol alone, so they need the explicit second rule -
+	// pf.conf(5) confirms scrub is "sticky until explicitly overridden": a
+	// later matching rule that also sets scrub, even to a different value,
+	// replaces the earlier one for that traffic rather than merging with it.
+	//
+	// 1194 (OpenVPN) and 51820 (WireGuard) are each protocol's *default*
+	// port only - either is commonly changed per deployment. If a router's
+	// actual VPN runs on a non-default port, add it here (or, better, once
+	// this needs to vary per router, promote it to a RouterConfig field
+	// rather than hand-editing this list).
+	matches := "match in proto { tcp, udp } scrub (no-df random-id max-mss 1440)\n" +
+		"match in proto { esp, ah, gre } scrub (random-id)\n" +
+		"match in proto udp to any port { 500, 4500, 1194, 51820 } scrub (random-id)\n"
 	var nats string
 	for _, v := range c.Ifaces {
 		if v.Type == "external" {

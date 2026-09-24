@@ -564,19 +564,31 @@ func ApplyIfaces(router, rundir, urlbase string, token *string) ([]string, error
 		return nil, err
 	}
 	var applied []string
+	applyDevice := func(device string) error {
+		changed, err := promoteIfDifferent("/tmp/hostname."+device, "/etc/hostname."+device)
+		if err != nil || !changed {
+			return err
+		}
+		if out, err := exec.Command("sh", "/etc/netstart", device).CombinedOutput(); err != nil {
+			log.Println(string(out))
+			return fmt.Errorf("netstart %s: %w", device, err)
+		}
+		applied = append(applied, device)
+		return nil
+	}
 	for _, d := range c.Ifaces {
-		changed, err := promoteIfDifferent("/tmp/hostname."+d.Device, "/etc/hostname."+d.Device)
-		if err != nil {
+		if err := applyDevice(d.Device); err != nil {
 			return applied, err
 		}
-		if !changed {
-			continue
+	}
+	// ConfigCreate writes a hostname.<if> for every pflow device too (the
+	// flowsrc/flowdst/pflowproto triple), so they need the same promote +
+	// netstart. Without this a pflow edit renders its config into rundir
+	// and stops there: generated, never installed, never brought up.
+	for _, p := range c.Pflows {
+		if err := applyDevice(p.Device); err != nil {
+			return applied, err
 		}
-		if out, err := exec.Command("sh", "/etc/netstart", d.Device).CombinedOutput(); err != nil {
-			log.Println(string(out))
-			return applied, fmt.Errorf("netstart %s: %w", d.Device, err)
-		}
-		applied = append(applied, d.Device)
 	}
 	gwChanged, err := promoteIfDifferent("/tmp/mygate", "/etc/mygate")
 	if err != nil {

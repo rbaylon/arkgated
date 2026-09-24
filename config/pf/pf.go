@@ -131,7 +131,7 @@ func ConfigCreate(c *pfconfigmodel.Pfconfig, rundir string) error {
 			return err
 		}
 	}
-
+	delifacefile := true
 	for _, p := range c.Pflows {
 		iface := fmt.Sprintf("flowsrc %s flowdst %s\npflowproto %d\n", p.Src, p.Dst, p.Proto)
 		err := os.WriteFile(rundir+"hostname."+p.Device, []byte(iface+"\n"), 0640)
@@ -139,8 +139,15 @@ func ConfigCreate(c *pfconfigmodel.Pfconfig, rundir string) error {
 			log.Println(err)
 			return err
 		}
+		delifacefile = false
 	}
-
+	// change this if there is a use case where there are multiple pflow interfaces
+	if delifacefile {
+		err := os.Rename("/etc/hostname.pflow0", "/etc/hostname.pflow0.disabled")
+		if err != nil {
+			fmt.Printf("Error renaming  file: %v\n", err)
+		}
+	}
 	return nil
 }
 

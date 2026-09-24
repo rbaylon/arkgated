@@ -155,6 +155,10 @@ func PfCreate(router string, rundir string, urlbase string, t *string) error {
 	for _, v := range c.Ifaces {
 		macros = fmt.Sprintf("%s%s = \"%s\"\n", macros, v.Name, v.Device)
 	}
+	pflow := ""
+	if c.PflowEnable {
+		pflow = "set state-defaults pflow"
+	}
 	tables := heredoc.Docf(`
 table <allowed> persist file "%s"
 table <subsexpr> persist file "%s"
@@ -172,7 +176,8 @@ set limit states 2000000
 set limit table-entries 400000
 set limit anchors 10240
 set limit src-nodes 2000000
-`, rundir+c.WifiIpList, rundir+c.SubsIpList, rundir+"fast.com.blocks")
+%s
+`, rundir+c.WifiIpList, rundir+c.SubsIpList, rundir+"fast.com.blocks", pflow)
 	var queues string
 	var defiface string
 	for _, v := range c.Ifaces {

@@ -1,0 +1,22 @@
+#!/bin/ksh
+#
+# $OpenBSD$
+#
+# rc.d script for arkgated
+
+daemon_name="arkgated"
+daemon_execdir="/usr/local/arkgate/${daemon_name}"
+daemon="${daemon_execdir}/arkgated"
+daemon_flags="--config ${daemon_execdir}/app.config"
+daemon_logger="daemon.info"
+pidfile="/var/run/${daemon_name}.pid"
+
+. /etc/rc.d/rc.subr
+
+pexp="${daemon} ${daemon_flags}"
+
+rc_reload=YES
+
+rc_bg=YES
+
+rc_cmd $1

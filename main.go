@@ -567,20 +567,18 @@ func main() {
 
 	// Remote mTLS listener: for clients not on this host, where filesystem
 	// permissions can't gate access - see serverTLSConfig.
-	tlsConfig, err := serverTLSConfig(c.tlscert, c.tlskey, c.tlsclientca)
-	if err != nil {
-		log.Fatal(err)
+	if c.tlsclientca != "" && c.tlscert != "" && c.tlskey != "" {
+		tlsConfig, err := serverTLSConfig(c.tlscert, c.tlskey, c.tlsclientca)
+		if err != nil {
+			log.Fatal(err)
+		}
+		tlsSock, err := tls.Listen("tcp", c.listenaddr, tlsConfig)
+		if err != nil {
+			log.Fatal(err)
+		}
+		sockets = append(sockets, tlsSock)
+		log.Println("IPC running (mTLS) on " + c.listenaddr)
 	}
-	tlsSock, err := tls.Listen("tcp", c.listenaddr, tlsConfig)
-	if err != nil {
-		log.Fatal(err)
-	}
-	sockets = append(sockets, tlsSock)
-	log.Println("IPC running (mTLS) on " + c.listenaddr)
-
-	//statCmd := Arkcommand.Arkcmd{Name: "systats", Cmd: c.rundir + "scripts/getstats.pl", Opts: nil}
-
-	//go srvclient.ExecScripts(&statCmd, "/tmp/mystats", 10)
 
 	token, err := srvclient.GetToken(c.creds, c.srvcurl+"login")
 	apitoken = token

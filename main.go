@@ -387,6 +387,14 @@ func run(c *config, out io.Writer, sockets []net.Listener, ctx context.Context) 
 					log.Println(dherr)
 				}
 			}
+		case "CheckConf_snmpd":
+			// Same as CheckConf_dhcpd, for snmpd.conf.
+			if snerr := pfconfig.SnmpCreate(c.rundir, c.srvcurl, apitoken); snerr != nil {
+				log.Println(snerr)
+				if _, err := conn.Write([]byte("NOK")); err != nil {
+					log.Println(snerr)
+				}
+			}
 		case "CheckConf_unbound":
 			// Same as CheckConf_dhcpd, for unbound.conf.
 			if dnerr := pfconfig.DnsCreate(c.rundir, c.srvcurl, apitoken); dnerr != nil {

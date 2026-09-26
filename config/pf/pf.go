@@ -529,6 +529,18 @@ func PppoeCreate(rundir, urlbase string, token *string) error {
 	return os.WriteFile("/tmp/npppd.conf", []byte(conf), 0640)
 }
 
+// SnmpCreate is DhcpCreate's snmpd.conf equivalent, fetching from
+// srvcman's /snmpserver/conf. The file carries SNMPv3 auth/enc keys, so it
+// is written 0600 rather than 0640 - snmpd runs as root and reads it
+// before dropping privileges, and nothing else needs to see it.
+func SnmpCreate(rundir, urlbase string, token *string) error {
+	conf, err := fetchConfText(urlbase+"snmpserver/conf", token)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile("/tmp/snmpd.conf", []byte(conf), 0600)
+}
+
 // promoteIfDifferent replaces dst with src's content, but only if they
 // differ (or dst doesn't exist yet) - reports whether it did anything. dst
 // is backed up to a timestamped copy first. src not existing is not an

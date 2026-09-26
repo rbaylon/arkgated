@@ -14,7 +14,6 @@ install:
 	mkdir -p ${distdir}
 	install -m 755 ${app} ${distdir}/
 	cp -r rundir ${distdir}/
-	install -m 644 app.config ${distdir}/
 
 dist:
 	make build

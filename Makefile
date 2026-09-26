@@ -14,12 +14,12 @@ install:
 	mkdir -p ${distdir}
 	install -m 755 ${app} ${distdir}/
 	cp -r rundir ${distdir}/
-	install app.config ${distdir}/
+	install -m 644 app.config ${distdir}/
 
 dist:
 	make build
 	make install
-	install rc.arkgated ${distdir}/
+	install -m 755 rc.arkgated ${distdir}/
 	cd ${distdir}
 	cd ..
 	tar -czvf ${app}.tar.gz ${app}

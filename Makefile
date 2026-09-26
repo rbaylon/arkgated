@@ -19,10 +19,8 @@ dist:
 	make build
 	make install
 	install -m 755 rc.arkgated ${distdir}/
-	cd ${distdir}
-	cd ..
-	tar -czvf ${app}.tar.gz ${app}
-	ls -l ${app}.tar.gz
+	tar -C /usr/local/arkgate/ -czvf /usr/local/arkgate/${app}.tar.gz ${app}
+	ls -l /usr/local/arkgate/${app}.tar.gz
 
 clean:
 	rm -rf ${distdir}

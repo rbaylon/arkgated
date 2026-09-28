@@ -258,6 +258,8 @@ block all
 block in quick from <bad_hosts>
 block in quick from <martians>
 pass quick inet proto icmp icmp-type unreach code needfrag
+# anti-lock
+pass in quick inet proto tcp from any to self port 8443 keep state (max-src-conn-rate 100/10, overload <bad_hosts> flush global) 
 `)
 	var defaultqrules string
 	for _, v := range c.Ifaces {

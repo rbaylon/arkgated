@@ -415,6 +415,28 @@ func run(c *config, out io.Writer, sockets []net.Listener, ctx context.Context) 
 					log.Println(pperr)
 				}
 			}
+		case "CaptivePortalEnv":
+			// Self-contained: fetches the portal's rendered .env from
+			// srvcman and installs it. Handled here rather than as a
+			// queued mv, because the file is the app's own config and
+			// carries a credential, so it is fetched over the API instead
+			// of travelling as command arguments.
+			out := "installed " + "/usr/local/arkgate/captiveportal/.env"
+			cperr := pfconfig.CaptivePortalEnvCreate(c.srvcurl, apitoken)
+			resp := outputResponse{OK: cperr == nil, Output: out}
+			if cperr != nil {
+				log.Println(cperr)
+				resp.Output = ""
+				resp.Error = cperr.Error()
+			}
+			if respBytes, merr := json.Marshal(resp); merr != nil {
+				log.Println("marshaling captiveportal response:", merr)
+				conn.Write([]byte("NOK"))
+			} else {
+				conn.Write(respBytes)
+			}
+			conn.Close()
+			return
 		case "ApplyAcme":
 			// Fully self-contained like ApplyIfaces: installs
 			// acme-client.conf, issues the certificate, repoints nginx and

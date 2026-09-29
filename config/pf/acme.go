@@ -14,11 +14,12 @@ import (
 )
 
 const (
-	acmeClientBin = "/usr/sbin/acme-client"
-	rcctlBin      = "/usr/sbin/rcctl"
-	acmeConfPath  = "/etc/acme-client.conf"
-	acmeStagePath = "/tmp/acme-client.conf"
-	nginxConfPath = "/etc/nginx/nginx.conf"
+	acmeClientBin  = "/usr/sbin/acme-client"
+	relaydBin      = "/usr/sbin/relayd"
+	rcctlBin       = "/usr/sbin/rcctl"
+	acmeConfPath   = "/etc/acme-client.conf"
+	acmeStagePath  = "/tmp/acme-client.conf"
+	relaydConfPath = "/etc/relayd.conf"
 )
 
 // fqdnRegex mirrors srvcman's validate.FQDN. The name arrives over the
@@ -27,17 +28,16 @@ const (
 // this is the last point before exec.
 var fqdnRegex = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$`)
 
-// nginxCertRegex and nginxKeyRegex match the certificate paths in
-// nginx.conf that this module owns: either the shipped self-signed pair
-// under /usr/local/arkgate/ssl, or a pair this module wrote on a previous
-// run. Matching the previously-written form too is what makes changing the
-// FQDN work - a plain literal search for the self-signed paths finds
-// nothing on the second run, and nginx would silently keep serving the old
-// certificate.
-var (
-	nginxCertRegex = regexp.MustCompile(`/usr/local/arkgate/ssl/cert\.pem|/etc/ssl/[A-Za-z0-9.-]+\.fullchain\.pem`)
-	nginxKeyRegex  = regexp.MustCompile(`/usr/local/arkgate/ssl/private/key\.pem|/etc/ssl/private/[A-Za-z0-9.-]+\.key`)
-)
+// relaydKeypairRegex matches a "tls keypair <name>" directive, quoted or
+// not. relayd's keypair directive takes no paths - it derives them as
+// /etc/ssl/<name>.crt and /etc/ssl/private/<name>.key - so setting the
+// name to the FQDN is the whole job, and matching whatever name is there
+// (rather than the literal "arkgate.local") is what makes both a re-run
+// and an FQDN change work.
+//
+// It deliberately does not match a line with a trailing comment; leaving
+// such a line alone is better than reformatting it.
+var relaydKeypairRegex = regexp.MustCompile(`^(\s*tls\s+keypair\s+)"?[^"\s]+"?\s*$`)
 
 // acmeCmdTimeout bounds acme-client itself. Issuance involves an ACME
 // challenge round trip to Let's Encrypt, so it is slower than anything
@@ -143,47 +143,81 @@ func installAcmeConf(fqdn, conf string) error {
 	return nil
 }
 
-// rewriteNginxPaths swaps the certificate and key paths this module owns
-// for fqdn's. Kept separate from the file handling so the substitution
-// itself - the part that has to cope with both a fresh self-signed config
-// and one this module already rewrote - can be exercised directly.
-func rewriteNginxPaths(content, fqdn string) string {
-	out := nginxCertRegex.ReplaceAllString(content, fmt.Sprintf("/etc/ssl/%s.fullchain.pem", fqdn))
-	return nginxKeyRegex.ReplaceAllString(out, fmt.Sprintf("/etc/ssl/private/%s.key", fqdn))
+// rewriteRelaydKeypair points every "tls keypair" directive at fqdn.
+// Kept separate from the file handling so the substitution itself - the
+// part that has to cope with the shipped name, a re-run, and an FQDN
+// change - can be exercised directly.
+//
+// Comment lines are skipped rather than matched. relayd.conf's own
+// commentary includes the phrases "tls keypair name" and "tls keypair
+// NAME cert ... key ...", and rewriting those would mangle the
+// documentation that explains why this directive works the way it does.
+func rewriteRelaydKeypair(content, fqdn string) string {
+	lines := strings.Split(content, "\n")
+	for i, line := range lines {
+		if strings.HasPrefix(strings.TrimLeft(line, " \t"), "#") {
+			continue
+		}
+		if m := relaydKeypairRegex.FindStringSubmatch(line); m != nil {
+			lines[i] = fmt.Sprintf("%s%q", m[1], fqdn)
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
-// pointNginxAt rewrites nginx.conf's certificate and key paths to fqdn's,
-// after backing the file up. It reports whether anything changed.
-func pointNginxAt(fqdn string) (bool, error) {
-	data, err := os.ReadFile(nginxConfPath)
+// pointRelaydAt sets relayd.conf's keypair name to fqdn, after backing the
+// file up, and only keeps the change if relayd itself accepts the result.
+// It reports whether anything changed.
+//
+// The verification step is not optional here: relayd -n loads the keypair
+// as part of checking the config, so it fails outright when
+// /etc/ssl/<fqdn>.crt isn't there yet - and relayd is what serves this
+// management UI, so restarting it with a config it cannot load would take
+// the UI down with it. On rejection the previous config is put straight
+// back and the restart is skipped.
+func pointRelaydAt(fqdn string) (bool, error) {
+	data, err := os.ReadFile(relaydConfPath)
 	if err != nil {
-		return false, fmt.Errorf("reading %s: %w", nginxConfPath, err)
+		return false, fmt.Errorf("reading %s: %w", relaydConfPath, err)
 	}
-	updated := rewriteNginxPaths(string(data), fqdn)
+	updated := rewriteRelaydKeypair(string(data), fqdn)
 	if updated == string(data) {
 		return false, nil
 	}
-	if err := backupFile(nginxConfPath); err != nil {
-		return false, fmt.Errorf("backing up %s: %w", nginxConfPath, err)
+	if err := backupFile(relaydConfPath); err != nil {
+		return false, fmt.Errorf("backing up %s: %w", relaydConfPath, err)
 	}
 	mode := os.FileMode(0644)
-	if info, serr := os.Stat(nginxConfPath); serr == nil {
+	if info, serr := os.Stat(relaydConfPath); serr == nil {
 		mode = info.Mode().Perm()
 	}
-	if err := os.WriteFile(nginxConfPath, []byte(updated), mode); err != nil {
-		return false, fmt.Errorf("writing %s: %w", nginxConfPath, err)
+	if err := os.WriteFile(relaydConfPath, []byte(updated), mode); err != nil {
+		return false, fmt.Errorf("writing %s: %w", relaydConfPath, err)
+	}
+	if out, cerr := runBounded(relaydBin, "-n", "-f", relaydConfPath); cerr != nil {
+		if rerr := os.WriteFile(relaydConfPath, data, mode); rerr != nil {
+			return false, fmt.Errorf("relayd rejected the updated %s (%s) and restoring it failed: %v",
+				relaydConfPath, strings.TrimSpace(out), rerr)
+		}
+		return false, fmt.Errorf("relayd rejected the updated %s, previous config restored: %s",
+			relaydConfPath, strings.TrimSpace(out))
 	}
 	return true, nil
 }
 
 // ApplyAcme issues (or renews) the gateway's Let's Encrypt certificate and
-// points nginx at it, as one operation:
+// points relayd at it, as one operation:
 //
 //  1. install /etc/acme-client.conf from srvcman's rendered copy, after
 //     acme-client -n accepts it
 //  2. acme-client -v <fqdn>
-//  3. back up nginx.conf and rewrite its cert/key paths
-//  4. rcctl restart nginx
+//  3. back up relayd.conf, set its keypair name to <fqdn>, and keep the
+//     change only if relayd -n accepts it
+//  4. rcctl restart relayd
+//
+// The order matters and cannot be rearranged: relayd -n loads the keypair
+// while checking the config, so step 3 can only succeed after step 2 has
+// written /etc/ssl/<fqdn>.crt and /etc/ssl/private/<fqdn>.key.
 //
 // It is a no-op when no record is enabled. Step 2 is the one that can
 // legitimately fail on a correct config - acme-client has to answer a
@@ -191,15 +225,15 @@ func pointNginxAt(fqdn string) (bool, error) {
 // - so its output is returned verbatim for the caller to surface rather
 // than collapsed into a generic error.
 //
-// nginx is restarted whenever acme-client succeeded, not only when the
-// paths changed: on a renewal the paths are already right and the point of
-// the restart is to make nginx pick up the new certificate file.
+// relayd is restarted whenever acme-client succeeded, not only when the
+// keypair name changed: on a renewal the name is already right and the
+// point of the restart is to make relayd pick up the new certificate.
 //
 // Trouble in steps 3-4 is reported in the returned text but does not fail
 // the call, because by then the certificate has already been issued.
 // Returning an error there invites a retry, and retrying issuance is not
 // free: Let's Encrypt rate-limits duplicate certificates (5 per week per
-// name), so a box with nginx missing or misconfigured would burn that
+// name), so a box with relayd missing or misconfigured would burn that
 // allowance re-requesting a certificate it already holds.
 func ApplyAcme(urlbase string, token *string) (string, error) {
 	fqdn, err := fetchActiveFqdn(urlbase, token)
@@ -232,30 +266,30 @@ func ApplyAcme(urlbase string, token *string) (string, error) {
 
 	// From here on the certificate exists, so problems are reported rather
 	// than returned as errors - see the note above about rate limits.
-	if _, serr := os.Stat(nginxConfPath); serr != nil {
-		fmt.Fprintf(&report, "\ncertificate issued, but %s was not found - nginx was left untouched and not restarted.\n", nginxConfPath)
-		fmt.Fprintf(&report, "Point your web server at %s and %s by hand.\n",
-			fmt.Sprintf("/etc/ssl/%s.fullchain.pem", fqdn), fmt.Sprintf("/etc/ssl/private/%s.key", fqdn))
+	if _, serr := os.Stat(relaydConfPath); serr != nil {
+		fmt.Fprintf(&report, "\ncertificate issued, but %s was not found - relayd was left untouched and not restarted.\n", relaydConfPath)
+		fmt.Fprintf(&report, "Point your TLS front end at /etc/ssl/%s.crt and /etc/ssl/private/%s.key by hand.\n", fqdn, fqdn)
 		return report.String(), nil
 	}
 
-	changed, err := pointNginxAt(fqdn)
+	changed, err := pointRelaydAt(fqdn)
 	if err != nil {
 		log.Println("acme:", err)
-		fmt.Fprintf(&report, "\ncertificate issued, but updating %s failed: %v\n", nginxConfPath, err)
+		fmt.Fprintf(&report, "\ncertificate issued, but %v\n", err)
+		fmt.Fprintf(&report, "relayd was not restarted, so the running service is untouched.\n")
 		return report.String(), nil
 	}
 	if changed {
-		fmt.Fprintf(&report, "\n%s updated to use %s\n", nginxConfPath, fqdn)
+		fmt.Fprintf(&report, "\n%s keypair set to %s\n", relaydConfPath, fqdn)
 	} else {
-		fmt.Fprintf(&report, "\n%s already points at %s\n", nginxConfPath, fqdn)
+		fmt.Fprintf(&report, "\n%s keypair already set to %s\n", relaydConfPath, fqdn)
 	}
 
-	if out, err := runBounded(rcctlBin, "restart", "nginx"); err != nil {
-		log.Println("acme: nginx restart failed:", err, out)
-		fmt.Fprintf(&report, "certificate issued, but restarting nginx failed: %s\n", strings.TrimSpace(out))
+	if out, err := runBounded(rcctlBin, "restart", "relayd"); err != nil {
+		log.Println("acme: relayd restart failed:", err, out)
+		fmt.Fprintf(&report, "certificate issued, but restarting relayd failed: %s\n", strings.TrimSpace(out))
 		return report.String(), nil
 	}
-	report.WriteString("nginx restarted\n")
+	report.WriteString("relayd restarted\n")
 	return report.String(), nil
 }

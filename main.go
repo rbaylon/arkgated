@@ -437,6 +437,24 @@ func run(c *config, out io.Writer, sockets []net.Listener, ctx context.Context) 
 			}
 			conn.Close()
 			return
+		case "BillPortalEnv":
+			// Same shape as CaptivePortalEnv, for the bill-portal app.
+			out := "installed " + "/usr/local/arkgate/billportal/.env"
+			bperr := pfconfig.BillPortalEnvCreate(c.srvcurl, apitoken)
+			resp := outputResponse{OK: bperr == nil, Output: out}
+			if bperr != nil {
+				log.Println(bperr)
+				resp.Output = ""
+				resp.Error = bperr.Error()
+			}
+			if respBytes, merr := json.Marshal(resp); merr != nil {
+				log.Println("marshaling billportal response:", merr)
+				conn.Write([]byte("NOK"))
+			} else {
+				conn.Write(respBytes)
+			}
+			conn.Close()
+			return
 		case "ApplyAcme":
 			// Fully self-contained like ApplyIfaces: installs
 			// acme-client.conf, issues the certificate, repoints nginx and

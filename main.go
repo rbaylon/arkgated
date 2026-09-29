@@ -415,6 +415,26 @@ func run(c *config, out io.Writer, sockets []net.Listener, ctx context.Context) 
 					log.Println(pperr)
 				}
 			}
+		case "ApplyAcme":
+			// Fully self-contained like ApplyIfaces: installs
+			// acme-client.conf, issues the certificate, repoints nginx and
+			// restarts it. The FQDN is fetched from srvcman's API rather
+			// than taken from this command, so a client cannot steer which
+			// name gets issued or which files get written.
+			out, aerr := pfconfig.ApplyAcme(c.srvcurl, apitoken)
+			resp := outputResponse{OK: aerr == nil, Output: out}
+			if aerr != nil {
+				log.Println(aerr)
+				resp.Error = aerr.Error()
+			}
+			if respBytes, merr := json.Marshal(resp); merr != nil {
+				log.Println("marshaling acme response:", merr)
+				conn.Write([]byte("NOK"))
+			} else {
+				conn.Write(respBytes)
+			}
+			conn.Close()
+			return
 		case "ApplyIfaces":
 			// Fully self-contained: regenerates and applies
 			// hostname.<if>/mygate itself, so there's no separate

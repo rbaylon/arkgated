@@ -4,7 +4,7 @@ distdir=/usr/local/arkgate/${app}
 
 build:
 	go mod tidy
-	go build -o ${app}
+	go build -ldflags "-s -w" -o ${app}
 
 rc:
 	install -m 755 rc.arkgated /etc/rc.d/${app}

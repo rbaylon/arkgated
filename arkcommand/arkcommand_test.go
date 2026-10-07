@@ -193,3 +193,39 @@ func TestQuietCommandsUnaffectedByCtxChange(t *testing.T) {
 		t.Error("Ping should not be quiet")
 	}
 }
+
+// SyspatchCheck waits on a remote mirror and can run for minutes. If it went
+// through the serialized worker queue it would hold up every pf/dhcpd/route
+// apply behind it, so it has to take the concurrent path.
+func TestSyspatchCheckRunsOutsideTheQueue(t *testing.T) {
+	if !IsConcurrent("SyspatchCheck") {
+		t.Error("SyspatchCheck must be a concurrent command, not queued behind mutating commands")
+	}
+}
+
+func TestTimeoutFor(t *testing.T) {
+	if got := TimeoutFor("Ping"); got != cmdTimeout {
+		t.Errorf("TimeoutFor(Ping) = %v, want the default %v", got, cmdTimeout)
+	}
+	if got := TimeoutFor("SyspatchCheck"); got <= cmdTimeout {
+		t.Errorf("TimeoutFor(SyspatchCheck) = %v, want longer than the default %v", got, cmdTimeout)
+	}
+}
+
+// A command with its own longer limit must not be killed at cmdTimeout, and
+// one without must still be.
+func TestLongTimeoutCommandOutlivesCmdTimeout(t *testing.T) {
+	withHelperEnv(t)
+	old := cmdTimeout
+	cmdTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { cmdTimeout = old })
+	longTimeouts["TestLong"] = 5 * time.Second
+	t.Cleanup(func() { delete(longTimeouts, "TestLong") })
+
+	if _, err := helperCmd("TestLong", "sleep", "500").RunCtx(context.Background()); err != nil {
+		t.Errorf("command with a 5s limit was cut off at the 100ms default: %v", err)
+	}
+	if _, err := helperCmd("TestDefault", "sleep", "500").RunCtx(context.Background()); err == nil {
+		t.Error("command without its own limit outlived the 100ms default")
+	}
+}

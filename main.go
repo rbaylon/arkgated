@@ -362,6 +362,13 @@ func run(c *config, out io.Writer, sockets []net.Listener, ctx context.Context) 
 			conn.Close()
 			return
 		}
+		// connDeadline is sized for the default command limit. A command
+		// with a longer limit (see Arkcommand.TimeoutFor) would otherwise
+		// be cut off by it before its own timeout fired, so re-arm the
+		// deadline for that command: 30s margin either side, as above.
+		if d := Arkcommand.TimeoutFor(cmd.Name); d > Arkcommand.CmdTimeout {
+			conn.SetDeadline(time.Now().Add(30*time.Second + d + 30*time.Second))
+		}
 		if !Arkcommand.IsQuiet(cmd.Name) {
 			log.Println("connection accepted")
 			log.Printf("%v", cmd)

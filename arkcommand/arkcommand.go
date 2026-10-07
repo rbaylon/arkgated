@@ -69,6 +69,31 @@ var concurrentCommands = map[string]bool{
 	"TunnelPs":       true,
 	"FdSysctl":       true,
 	"FdFstat":        true,
+	// SyspatchCheck is `syspatch -c`, which only lists available patches.
+	// It fetches the list from the network and can run for minutes, which
+	// is exactly why it must not sit on the serialized queue: it would
+	// block every pf/dhcpd/unbound/route apply behind it. See
+	// longTimeouts for its (longer) time limit.
+	"SyspatchCheck": true,
+}
+
+// longTimeouts gives specific commands a time limit longer than cmdTimeout.
+// cmdTimeout (90s) is sized for commands that act on local state; a
+// command that waits on a remote mirror needs more room, but only that
+// command - raising cmdTimeout itself would also loosen the bound on every
+// ping, traceroute and config apply. A command listed here should also be
+// in concurrentCommands, so its long run cannot stall the serialized queue.
+var longTimeouts = map[string]time.Duration{
+	"SyspatchCheck": 10 * time.Minute,
+}
+
+// TimeoutFor reports how long the command called name may run before
+// arkgated kills it: its entry in longTimeouts, otherwise cmdTimeout.
+func TimeoutFor(name string) time.Duration {
+	if d, ok := longTimeouts[name]; ok {
+		return d
+	}
+	return cmdTimeout
 }
 
 // IsConcurrent reports whether name is safe to run outside the serialized
@@ -114,7 +139,7 @@ func (ac *Arkcmd) Run() (int, error) {
 // cmdTimeout doc comment in registry.go for why neither of those used to
 // exist.
 func (ac *Arkcmd) RunCtx(parentCtx context.Context) (int, error) {
-	ctx, cancel := context.WithTimeout(parentCtx, cmdTimeout)
+	ctx, cancel := context.WithTimeout(parentCtx, TimeoutFor(ac.Name))
 	defer cancel()
 	cmd := newTrackedCmd(ctx, ac)
 	out, err := cmd.Output()
@@ -145,7 +170,7 @@ func (ac *Arkcmd) RunWithOutputCtx(parentCtx context.Context) (int, []byte) {
 	if !quiet {
 		log.Println("running:", ac.Cmd)
 	}
-	ctx, cancel := context.WithTimeout(parentCtx, cmdTimeout)
+	ctx, cancel := context.WithTimeout(parentCtx, TimeoutFor(ac.Name))
 	defer cancel()
 	cmd := newTrackedCmd(ctx, ac)
 	out, err := cmd.CombinedOutput()

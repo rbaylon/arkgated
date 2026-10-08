@@ -1,5 +1,5 @@
 app=arkgated
-version=$(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+version=$(git describe --tags --always 2>/dev/null || echo dev)
 distdir=/usr/local/arkgate/${app}
 
 build:

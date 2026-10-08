@@ -59,6 +59,8 @@ github.com/rbaylon/srvcman v1.1.70 h1:QpGbvK7EyGnGKFVS/ufivyQGoZ2OJZ1wtqHAsZ1JHZ
 github.com/rbaylon/srvcman v1.1.70/go.mod h1:da3YYPq2fXHrvQsPT5+XDO607mkZlSjwCf3GPqJa+9Q=
 github.com/rbaylon/srvcman v1.1.80 h1:mcDXHaGFABGD4q1YJ0d4s5lN+rqwI/DCjED0MPJDM4I=
 github.com/rbaylon/srvcman v1.1.80/go.mod h1:da3YYPq2fXHrvQsPT5+XDO607mkZlSjwCf3GPqJa+9Q=
+github.com/rbaylon/srvcman v1.1.81 h1:xEIdyLGFXEozp1b/kzz7T+7fwPsIlNkjnAjGfTjAj2I=
+github.com/rbaylon/srvcman v1.1.81/go.mod h1:da3YYPq2fXHrvQsPT5+XDO607mkZlSjwCf3GPqJa+9Q=
 github.com/segmentio/asm v1.2.0 h1:9BQrFxC+YOHJlTlHGkTrFWf59nbL3XnCoFLTwDCI7ys=
 github.com/segmentio/asm v1.2.0/go.mod h1:BqMnlJP91P8d+4ibuonYZw9mfnzI9HfxselHZr5aAcs=
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=

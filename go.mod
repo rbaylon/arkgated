@@ -6,7 +6,7 @@ require (
 	github.com/MakeNowJust/heredoc v1.0.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/namsral/flag v1.7.4-pre
-	github.com/rbaylon/srvcman v1.1.80
+	github.com/rbaylon/srvcman v1.1.81
 )
 
 require (

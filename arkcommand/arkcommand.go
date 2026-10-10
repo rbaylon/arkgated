@@ -28,9 +28,16 @@ type Arkcmd struct {
 // log. Failures still surface through the caller's own handling
 // (gatewaymonitor's success/failure history, the traffic-stats error
 // response), just not as raw command output here.
+//
+// TunnelPs is the process listing srvcman's tunnel watchdog reads once a
+// minute (and the tunnels page reads on every view). arkgated logs a
+// command's whole output, and this one is the entire process table - dozens
+// of lines each time - so left loud it would fill the daemon log and push
+// everything else out of it within hours.
 var quietCommands = map[string]bool{
 	"HealthPing": true,
 	"Netstat":    true,
+	"TunnelPs":   true,
 }
 
 // IsQuiet reports whether name is a high-frequency command whose

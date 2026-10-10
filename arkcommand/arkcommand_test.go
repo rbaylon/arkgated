@@ -229,3 +229,14 @@ func TestLongTimeoutCommandOutlivesCmdTimeout(t *testing.T) {
 		t.Error("command without its own limit outlived the 100ms default")
 	}
 }
+
+// The tunnel watchdog reads the whole process table every minute; logging it
+// each time would flood the daemon log.
+func TestTunnelPsIsQuiet(t *testing.T) {
+	if !IsQuiet("TunnelPs") {
+		t.Error("TunnelPs output must not be logged on every run")
+	}
+	if IsQuiet("StartTunnel: x") {
+		t.Error("starting a tunnel is not routine and should stay logged")
+	}
+}

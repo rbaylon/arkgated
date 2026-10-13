@@ -521,14 +521,30 @@ func DnsCreate(rundir, urlbase string, token *string) error {
 	return os.WriteFile("/tmp/unbound.conf", []byte(conf), 0640)
 }
 
+// npppdStagePath is where PppoeCreate leaves the rendered npppd.conf for
+// srvcman's apply flow to move into /etc/npppd. A var only so tests can point
+// it at a temp dir.
+var npppdStagePath = "/tmp/npppd.conf"
+
 // PppoeCreate is DhcpCreate's npppd.conf equivalent, fetching from srvcman's
-// /pppoes/conf and staging at rundir+"npppd.conf".
+// /pppoe/conf and staging it at npppdStagePath.
+//
+// The module is mounted at /api/v1/pppoe - singular, like its registry key -
+// not /pppoes. This used to ask for pppoes/conf, which is a 404: no file was
+// ever staged, the install step that follows had nothing to move, and npppd
+// was restarted without a config and died, with the apply reporting success.
 func PppoeCreate(rundir, urlbase string, token *string) error {
-	conf, err := fetchConfText(urlbase+"pppoes/conf", token)
+	// A file left from an earlier run must not survive a failed fetch: the
+	// install step moves whatever is at this path into /etc/npppd, so a stale
+	// one would be installed as if it were new.
+	if err := os.Remove(npppdStagePath); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	conf, err := fetchConfText(urlbase+"pppoe/conf", token)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile("/tmp/npppd.conf", []byte(conf), 0640)
+	return os.WriteFile(npppdStagePath, []byte(conf), 0640)
 }
 
 // SnmpCreate is DhcpCreate's snmpd.conf equivalent, fetching from

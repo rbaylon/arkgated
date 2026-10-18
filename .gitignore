@@ -26,4 +26,9 @@ arkgated
 rundir/subslist.txt
 rundir/wifilist.txt
 *.conf
-config.json
+rundir/config.json
+sample.config
+tags
+CLAUDE.md
+.claude
+app.config

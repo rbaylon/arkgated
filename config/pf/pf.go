@@ -1,92 +1,60 @@
 package pfconfig
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
-	"math/rand/v2"
+	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 
 	"github.com/MakeNowJust/heredoc"
+	pfconfigmodel "github.com/rbaylon/srvcman/modules/pfconfig/model"
+	planmodel "github.com/rbaylon/srvcman/modules/plans/model"
+	vlanmodel "github.com/rbaylon/srvcman/modules/vlans/model"
 )
 
-type Voucher struct {
-	Value         string    `json:"value"`
-	Type          string    `json:"type"`
-	Hours         int       `json:"hours"`
-	Status        string    `json:"status"`
-	Downspeed     int       `json:"downspeed"`
-	Upspeed       int       `json:"upspeed"`
-	Burstspeed    int       `json:"burstspeed"`
-	Duration      int       `json:"duration"`
-	Ip            string    `json:"ip"`
-	DateStarted   time.Time `json:"date_started"`
-	DateEnd       time.Time `json:"date_end"`
-	DateExpires   time.Time `json:"date_expires"`
-	HoursConsumed float64   `json:"hours_consumed"`
-	Gateway       string    `json:"gateway"`
-	PfConfigID    uint      `json:"pfconfig_id"`
+func MaskToCidr(maskString string) int {
+	ip := net.ParseIP(maskString)
+	if ip == nil {
+		log.Fatalf("Invalid IP address: %s", maskString)
+	}
+
+	ip4 := ip.To4()
+	if ip4 == nil {
+		log.Fatalf("IP address is not IPv4: %s", maskString)
+	}
+	mask := net.IPMask(ip4)
+	prefixSize, _ := mask.Size()
+	return prefixSize
 }
 
-type Iface struct {
-	Name       string `json:"name"`
-	Speed      string `json:"speed"`
-	Device     string `json:"device"`
-	Default    bool   `json:"default"`
-	Type       string `json:"type"`
-	Gateway    string `json:"gateway"`
-	PfConfigID uint   `json:"pfconfig_id"`
+func BroadcastAddr(n *net.IPNet) net.IP {
+	ip := n.IP
+	mask := n.Mask
+	broadcast := make(net.IP, len(ip))
+	for i := range ip {
+		// For IPv4, ^mask[i] does the bitwise NOT.
+		// For IPv6, the calculation is more complex and usually not done this way.
+		broadcast[i] = ip[i] | ^mask[i]
+	}
+	return broadcast
 }
 
-type Dhcp struct {
-	Subnet     string `json:"subnet"`
-	Netmask    string `json:"netmask"`
-	Routers    string `json:"routers"`
-	Dnsservers string `json:"dnsservers"`
-	Range      string `json:"range"`
-	Type       string `json:"type"`
-	PfConfigID uint   `json:"pfconfig_id"`
-}
-
-type Sub struct {
-	FirstName   string    `json:"first_name"`
-	LastName    string    `json:"last_name"`
-	FramedIp    string    `json:"framed_ip"`
-	Type        string    `json:"type"`
-	Status      string    `json:"status"`
-	Mac         string    `json:"mac"`
-	Loc         string    `json:"loc"`
-	Downspeed   int       `json:"downspeed"`
-	Upspeed     int       `json:"upspeed"`
-	Burstspeed  int       `json:"burstspeed"`
-	Duration    int       `json:"duration"`
-	Gateway     string    `json:"gateway"`
-	Priority    int       `json:"priority"`
-	DateEnd     time.Time `json:"date_end"`
-	DateExpires time.Time `json:"date_expires"`
-	PfconfigID  uint      `json:"pfconfig_id"`
-}
-
-type PfConfig struct {
-	Ifaces            []Iface   `json:"ifaces"`
-	WifiIpList        string    `json:"wifi_ip_list"`
-	SubsIpList        string    `json:"subs_ip_list"`
-	SubsPortalPort    int       `json:"subs_portal_port"`
-	CaptivePortalPort int       `json:"captive_portal_port"`
-	Router            string    `json:"router"`
-	LoadBalance       bool      `json:"load_balance"`
-	Vouchers          []Voucher `json:"vouchers"`
-	Dhcps             []Dhcp    `json:"dhcps"`
-	Subs              []Sub     `json:"subs"`
-}
-
-func GetSubs(url string, token *string) (*PfConfig, error) {
+func GetSubs(url string, token *string) (*pfconfigmodel.Pfconfig, error) {
+	if token == nil {
+		return nil, fmt.Errorf("GetSubs: no API token available")
+	}
 	client := &http.Client{}
-	req, _ := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", *token))
 	res, err := client.Do(req)
 	if err != nil {
@@ -94,57 +62,114 @@ func GetSubs(url string, token *string) (*PfConfig, error) {
 		return nil, err
 	}
 	defer res.Body.Close()
-	responseData, ioerr := ioutil.ReadAll(res.Body)
+	responseData, ioerr := io.ReadAll(res.Body)
 	if ioerr != nil {
 		return nil, ioerr
 	}
-	var cfg PfConfig
-	json.Unmarshal(responseData, &cfg)
+	if res.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GetSubs: %s returned %d: %s", url, res.StatusCode, string(responseData))
+	}
+	var cfg pfconfigmodel.Pfconfig
+	if err := json.Unmarshal(responseData, &cfg); err != nil {
+		return nil, err
+	}
 	return &cfg, nil
 }
 
-func (c *PfConfig) DhcpCreate(rundir string) error {
-	dhcp := ""
-	hosts := ""
-	for _, d := range c.Dhcps {
-		for _, h := range c.Subs {
-			if h.Type == d.Type {
-				host_block := heredoc.Docf(`
-  	host %s {
-    	hardware ethernet %s;
-    	fixed-address %s;
-  	}
-`, h.FirstName+fmt.Sprintf("%d", rand.IntN(100000))+h.LastName, strings.ToLower(h.Mac), h.FramedIp)
-				hosts = fmt.Sprintf("%s%s", hosts, host_block)
+type vlanmap struct {
+	Vmap map[string]vlanmodel.Vlan
+}
+
+func getVlans(vlans []vlanmodel.Vlan) vlanmap {
+	vm := vlanmap{}
+	vm.Vmap = make(map[string]vlanmodel.Vlan)
+	for _, v := range vlans {
+		vm.Vmap[v.Name] = v
+	}
+	return vm
+}
+func ConfigCreate(c *pfconfigmodel.Pfconfig, rundir string) error {
+	dnslist := ""
+	vlans := getVlans(c.Vlans)
+	for _, d := range c.Ifaces {
+		vif := ""
+		if strings.Contains(d.Device, "vlan") {
+			cidr := MaskToCidr(d.Netmask)
+			_, ipNet, err := net.ParseCIDR(fmt.Sprintf("%s/%d", d.Ip, cidr))
+			if err != nil {
+				fmt.Println("Error parsing CIDR:", err)
+				return err
+			}
+			broadcast := BroadcastAddr(ipNet)
+			vlan := vlans.Vmap[d.Device]
+			vif = fmt.Sprintf(" %s parent %s rxprio %d txprio %d vnetid %d",
+				broadcast, vlan.ParentDevice, vlan.RxPrio, vlan.TxPrio, vlan.VlanTag)
+		}
+		iface := fmt.Sprintf("inet %s %s%s\n", d.Ip, d.Netmask, vif)
+		if d.Default {
+			if d.Ip != "autoconf" {
+				dnslist := fmt.Sprintf("%snameserver %s\n", dnslist, d.Gateway)
+				err := os.WriteFile(rundir+"mygate", []byte(d.Gateway+"\n"), 0640)
+				if err != nil {
+					log.Println(err)
+					return err
+				}
+				nservers := strings.Split(c.Dns, " ")
+				for _, dns := range nservers {
+					dnslist = fmt.Sprintf("%snameserver %s\n", dnslist, dns)
+				}
+				err = os.WriteFile(rundir+"resolv.conf", []byte(dnslist+"\n"), 0640)
+				if err != nil {
+					log.Println(err)
+					return err
+				}
 			}
 		}
-		net_block := heredoc.Docf(`
-subnet %s netmask %s {
-  option routers %s;
-  option domain-name-servers %s, 8.8.8.8, 4.2.2.2;
-  range %s;
-  %s
-}
-`, d.Subnet, d.Netmask, d.Routers, d.Dnsservers, d.Range, hosts)
-		dhcp = fmt.Sprintf("%s%s", dhcp, net_block)
-		hosts = ""
+		err := os.WriteFile(rundir+"hostname."+d.Device, []byte(iface+"\n"), 0640)
+		if err != nil {
+			log.Println(err)
+			return err
+		}
 	}
-	err := os.WriteFile(rundir+"dhcpd.conf", []byte(dhcp), 0600)
-	if err != nil {
-		log.Println(err)
-		return err
+	delifacefile := true
+	for _, p := range c.Pflows {
+		iface := fmt.Sprintf("flowsrc %s flowdst %s\npflowproto %d\n", p.Src, p.Dst, p.Proto)
+		err := os.WriteFile(rundir+"hostname."+p.Device, []byte(iface+"\n"), 0640)
+		if err != nil {
+			log.Println(err)
+			return err
+		}
+		delifacefile = false
+	}
+	// change this if there is a use case where there are multiple pflow interfaces
+	if delifacefile {
+		err := os.Rename("/etc/hostname.pflow0", "/etc/hostname.pflow0.disabled")
+		if err != nil {
+			fmt.Printf("Error renaming  file: %v\n", err)
+		}
 	}
 	return nil
 }
 
-func (c *PfConfig) Create(rundir string, urlbase string, t *string) error {
+func PfCreate(router string, rundir string, urlbase string, t *string) error {
+	newpfcfg, err := GetSubs(urlbase+"pfconfig/query/"+router, t)
+	if err != nil {
+		log.Println(err)
+		return err
+	}
+	c := newpfcfg
 	var macros string
 	for _, v := range c.Ifaces {
 		macros = fmt.Sprintf("%s%s = \"%s\"\n", macros, v.Name, v.Device)
 	}
+	pflow := ""
+	if c.PflowEnable {
+		pflow = "set state-defaults pflow"
+	}
 	tables := heredoc.Docf(`
 table <allowed> persist file "%s"
 table <subsexpr> persist file "%s"
+table <fastdotcom> persist file "%s"
 table <bad_hosts> persist
 table <martians> { 0.0.0.0/8 169.254.0.0/16  \ 
        192.0.0.0/24 192.0.2.0/24 224.0.0.0/3 \
@@ -153,27 +178,63 @@ table <martians> { 0.0.0.0/8 169.254.0.0/16  \
 set block-policy drop 
 set loginterface egress 
 set skip on lo0
-set state-defaults pflow
-set limit states 500000
-set limit frags 10000
-`, rundir+c.WifiIpList, rundir+c.SubsIpList)
+set optimization normal
+set limit states 2000000
+set limit table-entries 400000
+set limit anchors 10240
+set limit src-nodes 2000000
+%s
+`, rundir+c.WifiIpList, rundir+c.SubsIpList, rundir+"fast.com.blocks", pflow)
 	var queues string
 	var defiface string
 	for _, v := range c.Ifaces {
-		queues = fmt.Sprintf("%squeue %s on { $%s } bandwidth %s\nqueue %sdef parent %s bandwidth 2M default\n",
-			queues, v.Name, v.Name, v.Speed, v.Name, v.Name)
+		queues = fmt.Sprintf("%squeue %s on { $%s } bandwidth %s\nqueue %sdef parent %s bandwidth %s default\n",
+			queues, v.Name, v.Name, v.Speed, v.Name, v.Name, v.Speed)
+		queues = fmt.Sprintf("%squeue %slow parent %s bandwidth 20M qlimit 1024\n",
+			queues, v.Name, v.Name)
 		if v.Default {
 			defiface = v.Name
 		}
 	}
-	queues = queues + heredoc.Docf(`
-queue selfq parent %s bandwidth 10M min 5M max 10M burst 15M for 100ms 
+	queues = queues + heredoc.Docf(` 
 queue apps parent %s bandwidth 10M 
 queue  ssh_interactive parent apps bandwidth 5M min 2M 
 queue  ssh_bulk parent apps bandwidth 5M max 5M
 # insert new queueus after this line 
-`, defiface, defiface)
-	matches := "match in all scrub (no-df random-id max-mss 1440)\n"
+`, defiface)
+	// no-df/max-mss are the DF-clearing and TCP MSS clamping mitigations for
+	// the classic tunnel-MTU/PMTUD blackhole problem (see e.g. Cisco's PMTUD
+	// writeup on GRE/IPsec): a packet too big for some link on the path gets
+	// dropped instead of fragmented, and if ICMP is blocked anywhere on the
+	// path the sender never finds out. That is exactly the wrong thing to do
+	// to a subscriber's own VPN traffic passing through this box, though:
+	// no-df forces fragmentation of an already-encrypted ESP/GRE payload
+	// (expensive to reassemble, and some peers handle it badly - itself a
+	// common cause of "VPN is slow through this firewall"), and max-mss only
+	// ever touches TCP anyway, so it does nothing for the UDP-based VPNs
+	// below and isn't worth the risk of applying to the TCP ones. So general
+	// traffic gets the full treatment; IPsec/GRE/OpenVPN/WireGuard get only
+	// random-id (IP-ID anti-fingerprinting, unrelated to fragmentation) -
+	// PMTUD for that traffic is left to work the normal way (which needs
+	// ICMP type 3 code 4 actually passed through - see the custom Rules
+	// section below for where to add that exception if it's still blocked).
+	//
+	// proto {tcp, udp} on the first rule is what excludes ESP (50), AH (51)
+	// and GRE (47) - they're simply never tcp or udp, so they never match it
+	// at all, no negation needed. IKE/NAT-T and the two UDP-based VPNs *do*
+	// match on protocol alone, so they need the explicit second rule -
+	// pf.conf(5) confirms scrub is "sticky until explicitly overridden": a
+	// later matching rule that also sets scrub, even to a different value,
+	// replaces the earlier one for that traffic rather than merging with it.
+	//
+	// 1194 (OpenVPN) and 51820 (WireGuard) are each protocol's *default*
+	// port only - either is commonly changed per deployment. If a router's
+	// actual VPN runs on a non-default port, add it here (or, better, once
+	// this needs to vary per router, promote it to a RouterConfig field
+	// rather than hand-editing this list).
+	matches := "match in proto { tcp, udp } scrub (no-df random-id max-mss 1440)\n" +
+		"match in proto { esp, ah, gre } scrub (random-id)\n" +
+		"match in proto udp to any port { 500, 4500, 1194, 51820 } scrub (random-id)\n"
 	var nats string
 	for _, v := range c.Ifaces {
 		if v.Type == "external" {
@@ -196,34 +257,29 @@ queue  ssh_bulk parent apps bandwidth 5M max 5M
 block all
 block in quick from <bad_hosts>
 block in quick from <martians>
+pass quick inet proto icmp icmp-type unreach code needfrag
+# anti-lock
+pass in quick inet proto tcp from any to self port 8443 keep state (max-src-conn-rate 100/10, overload <bad_hosts> flush global) 
 `)
 	var defaultqrules string
 	for _, v := range c.Ifaces {
 		defaultqrules = fmt.Sprintf("%sblock return out on { $%s } inet all set queue %sdef\n",
 			defaultqrules, v.Name, v.Name)
 	}
+	defaultqrules = fmt.Sprintf("%spass out from self\n", defaultqrules)
 	var passrules string
 	var gws []string
-	var extifs []string
+	//var extifs []string
 	for _, v := range c.Ifaces {
 		if v.Type == "external" {
-			extifs = append(extifs, v.Name)
-			gws = append(gws, v.Gateway)
+			//extifs = append(extifs, v.Name)
+			gws = append(gws, fmt.Sprintf("%s weight %d", v.Gateway, v.LbPercentage))
 		}
 	}
 	var gateways string
 	var lbrules string
 	if c.LoadBalance {
-		gateways = fmt.Sprintf("route-to { %s } round-robin sticky-address", strings.Join(gws, " "))
-		for _, g := range extifs {
-			for _, v := range c.Ifaces {
-				if v.Type == "external" {
-					if v.Name != g {
-						lbrules = fmt.Sprintf("%spass out on $%s from $%s route-to %s\n", lbrules, g, v.Name, v.Gateway)
-					}
-				}
-			}
-		}
+		gateways = fmt.Sprintf("route-to { %s } round-robin sticky-address", strings.Join(gws, ", "))
 	} else {
 		gateways = ""
 		lbrules = ""
@@ -231,51 +287,68 @@ block in quick from <martians>
 
 	for _, v := range c.Ifaces {
 		if v.Type == "external" {
-			passrules = fmt.Sprintf("%spass out quick on { $%s } proto {udp, tcp} to any port 53\n", passrules, v.Name)
+			passrules = fmt.Sprintf("%spass out quick on { $%s } proto {udp, tcp} to any port { 853, 53 }\n", passrules, v.Name)
 			if v.Default {
 				passrules = fmt.Sprintf("%spass in on { $%s } inet proto tcp from any to $%s:0 port 22 keep state (max-src-conn-rate 10/10, overload <bad_hosts> flush global) set queue (ssh_interactive, ssh_bulk)\n",
 					passrules, v.Name, v.Name)
-				passrules = fmt.Sprintf("%spass out on { $%s } from { $%s:0 } to any set queue selfq\n", passrules, v.Name, v.Name)
+			} else {
+				passrules = fmt.Sprintf("%spass in on { $%s } inet proto tcp from any to $%s:0 port 22 keep state (max-src-conn-rate 10/10, overload <bad_hosts> flush global) set queue (ssh_interactive, ssh_bulk) reply-to %s\n",
+					passrules, v.Name, v.Name, v.Gateway)
 			}
-			passrules = fmt.Sprintf("%spass out on { $%s } inet proto icmp from { $%s:0 } to any\n", passrules, v.Name, v.Name)
-			passrules = fmt.Sprintf("%spass out on { $%s } from { $%s:0 } to any\n", passrules, v.Name, v.Name)
 		} else {
-			passrules = fmt.Sprintf("%spass in quick on { $%s } proto {udp, tcp} to any port 53\n", passrules, v.Name)
-			passrules = fmt.Sprintf("%spass out on { $%s } from { $%s:0 }\n", passrules, v.Name, v.Name)
-			passrules = fmt.Sprintf("%spass in on { $%s } inet proto tcp from any to { $%s:0, 127.0.0.1 } port { %d, %d, 22, 667 }\n", passrules, v.Name, v.Name, c.CaptivePortalPort, c.SubsPortalPort)
+			//passrules = fmt.Sprintf("%spass in quick on { $%s } proto {udp, tcp} to any port 53 rdr-to $%s:0 port 53\n", passrules, v.Name, v.Name)
+			passrules = fmt.Sprintf("%spass in quick on { $%s } inet proto {udp, tcp} to any port 53\n", passrules, v.Name)
+			passrules = fmt.Sprintf("%spass in on { $%s } inet proto tcp from any to { $%s:0, 127.0.0.1 } port { %d, %d, 22 }\n", passrules, v.Name, v.Name, c.CaptivePortalPort, c.SubsPortalPort)
 			passrules = fmt.Sprintf("%spass in quick on { $%s } inet proto tcp from any to $%s:0 port = 22 keep state\n", passrules, v.Name, v.Name)
-			passrules = fmt.Sprintf("%spass in quick on { $%s } inet proto tcp from any to $%s:0 port = 9100 keep state\n", passrules, v.Name, v.Name)
-			passrules = fmt.Sprintf("%spass in quick on { $%s } inet proto tcp from any to $%s:0 port = 9000 keep state\n", passrules, v.Name, v.Name)
 			passrules = fmt.Sprintf("%spass in quick on { $%s } inet proto udp from any port = bootpc to 255.255.255.255 port = bootps keep state\n", passrules, v.Name)
 			passrules = fmt.Sprintf("%spass in quick on { $%s } inet proto udp from any port = bootpc to { $%s:0 } port = bootps keep state\n", passrules, v.Name, v.Name)
 			passrules = fmt.Sprintf("%spass out quick on { $%s } inet proto udp from { $%s:0 } port = bootps to any port = bootpc keep state\n", passrules, v.Name, v.Name)
 		}
 	}
 
-	newpfcfg, err := GetSubs(urlbase+"pfconfig/query/"+c.Router, t)
-	if err != nil {
-		log.Println(err)
-		return err
+	plans := make(map[string]string)
+	planlist := make(map[string]planmodel.Plan)
+	plantables := ""
+	strules := ""
+	planqueue := ""
+	for _, v := range newpfcfg.Plans {
+		plans[v.Plan] = ""
+		planlist[v.Plan] = v
+		plantables = fmt.Sprintf("%stable <%s> persist file \"%swifilist.txt%s\"\n", plantables, v.Plan, rundir, v.Plan)
+		for _, i := range c.Ifaces {
+			if i.Type == "external" {
+				planqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM\n", planqueue, v.Plan, i.Name, i.Name, v.SpeedTestUp, v.SpeedTestUp)
+				strules = fmt.Sprintf("%spass out quick on $%s set queue %s%s set prio 7 tagged \"%s\"\n", strules, i.Name, v.Plan, i.Name, v.Plan)
+				strules = fmt.Sprintf("%spass out quick on $%s set queue %s%s set prio 7 tagged \"%sfast\"\n", strules, i.Name, v.Plan, i.Name, v.Plan)
+			} else {
+				planqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM\n", planqueue, v.Plan, i.Name, i.Name, v.SpeedTestDown, v.SpeedTestDown)
+				strules = fmt.Sprintf("%spass in quick on $%s inet proto { tcp, udp } from <%s> to any port { 5060, 8080 } set queue %s%s set prio 7 tag \"%s\"\n", strules, i.Name, v.Plan, v.Plan, i.Name, v.Plan)
+				strules = fmt.Sprintf("%spass in quick on $%s inet proto tcp from <%s> to <fastdotcom> port 443 set queue %s%s set prio 7 tag \"%sfast\"\n", strules, i.Name, v.Plan, v.Plan, i.Name, v.Plan)
+			}
+		}
 	}
 	var subqueue string
 	var subpass string
-	for _, i := range c.Ifaces {
+	var gateway string
+	var pppcreds string
+	for _, i := range newpfcfg.Ifaces {
 		for _, voucher := range newpfcfg.Vouchers {
 			if voucher.Status == "active" {
 				if i.Type == "external" {
 					subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM\n",
 						subqueue, voucher.Value, i.Name, i.Name, voucher.Upspeed, voucher.Upspeed)
-					subpass = fmt.Sprintf("%spass out on $%s set queue %s%s tagged \"%s\"\n",
+					subpass = fmt.Sprintf("%spass out quick on $%s set queue %s%s tagged \"%s\"\n",
 						subpass, i.Name, voucher.Value, i.Name, voucher.Value)
 				} else {
-					gateways = ""
 					if voucher.Gateway != "" {
-						gateways = fmt.Sprintf("route-to %s", voucher.Gateway)
+						gateway = fmt.Sprintf("route-to %s", voucher.Gateway)
+					} else {
+						gateway = gateways
 					}
 					subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM burst %dM for %dms\n",
 						subqueue, voucher.Value, i.Name, i.Name, voucher.Downspeed, voucher.Downspeed, voucher.Burstspeed, voucher.Duration)
-					subpass = fmt.Sprintf("%spass in on $%s from %s %s set queue %s%s tag \"%s\"\n",
-						subpass, i.Name, voucher.Ip, gateways, voucher.Value, i.Name, voucher.Value)
+					subpass = fmt.Sprintf("%spass in quick on $%s from %s %s set queue %s%s tag \"%s\"\n",
+						subpass, i.Name, voucher.Ip, gateway, voucher.Value, i.Name, voucher.Value)
 				}
 			}
 		}
@@ -287,40 +360,49 @@ block in quick from <martians>
 					priority = fmt.Sprintf("set prio %d", sub.Priority)
 				}
 				if i.Type == "external" {
-					subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM\n", subqueue, ident, i.Name, i.Name, sub.Upspeed, sub.Upspeed)
-					subpass = fmt.Sprintf("%spass out on $%s set queue %s%s %s tagged \"%s\"\n",
-						subpass, i.Name, ident, i.Name, priority, ident)
-					/*ulbw := sub.Upspeed - 1
-					subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM\n",
-						subqueue, ident, i.Name, i.Name, sub.Upspeed, sub.Upspeed)
-					subqueue = fmt.Sprintf("%squeue %s%sack parent %s%s bandwidth 5M min 1M\n", subqueue, ident, i.Name, ident, i.Name)
-					subqueue = fmt.Sprintf("%squeue %s%sdata parent %s%s bandwidth %dM min 5M max %dM\n", subqueue, ident, i.Name, ident, i.Name, ulbw, sub.Upspeed)
-					subpass = fmt.Sprintf("%spass out on $%s set queue ( %s%sdata, %s%sack ) %s tagged \"%s\"\n",
-						subpass, i.Name, ident, i.Name, ident, i.Name, priority, ident)
-					*/
+					subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM qlimit 1024\n",
+						subqueue, ident, i.Name, i.Name, planlist[sub.Plan].Upspeed, planlist[sub.Plan].Upspeed)
+
+					//subqueue = fmt.Sprintf("%squeue %s%stest parent %s bandwidth %dM min 5M max %dM qlimit 1024\n",
+					//subqueue, ident, i.Name, i.Name, planlist[sub.Plan].SpeedTestUp, planlist[sub.Plan].SpeedTestUp)
+
+					//subpass = fmt.Sprintf("%spass out quick on $%s set queue (%s%stest, %slow) set prio 7 tagged \"%stest\"\n",
+					//subpass, i.Name, ident, i.Name, i.Name, ident)
+
+					subpass = fmt.Sprintf("%spass out quick on $%s set queue (%s%s, %slow) %s tagged \"%s\"\n",
+						subpass, i.Name, ident, i.Name, i.Name, priority, ident)
 				} else {
 					if i.Name == sub.Type {
-						//dlbw := sub.Downspeed - 1
-						gateways = ""
-						if sub.Gateway != "" {
-							gateways = fmt.Sprintf("route-to %s", sub.Gateway)
+						if sub.Pppusername != "" && sub.Ppppassword != "" {
+							pppcreds = fmt.Sprintf("%s%s:\\\n\t:password=%s:\\\n\t:framed-ip-address=%s:\n\n",
+								pppcreds, sub.Pppusername, sub.Ppppassword, sub.FramedIp)
 						}
-						subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM burst %dM for %dms\n",
-							subqueue, ident, i.Name, i.Name, sub.Downspeed, sub.Downspeed, sub.Burstspeed, sub.Duration)
-						subpass = fmt.Sprintf("%spass in on $%s from %s %s set queue %s%s %s tag \"%s\"\n",
-							subpass, i.Name, sub.FramedIp, gateways, ident, i.Name, priority, ident)
-						/*
-							subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM\n",
-								subqueue, ident, i.Name, i.Name, sub.Downspeed, sub.Downspeed)
-							subqueue = fmt.Sprintf("%squeue %s%sack parent %s%s bandwidth 5M min 1M\n", subqueue, ident, i.Name, ident, i.Name)
-							subqueue = fmt.Sprintf("%squeue %s%sdata parent %s%s bandwidth %dM min 5M max %dM burst %dM for %dms\n", subqueue, ident, i.Name, ident, i.Name, dlbw, sub.Downspeed, sub.Burstspeed, sub.Duration)
-							subpass = fmt.Sprintf("%spass in on $%s from %s %s set queue ( %s%sdata, %s%sack ) %s tag \"%s\"\n",
-								subpass, i.Name, sub.FramedIp, gateways, ident, i.Name, ident, i.Name, priority, ident)
-						*/
+
+						if sub.Gateway != "" {
+							gateway = fmt.Sprintf("route-to %s", sub.Gateway)
+						} else {
+							gateway = gateways
+						}
+						subqueue = fmt.Sprintf("%squeue %s%s parent %s bandwidth %dM min 5M max %dM burst %dM for %dms qlimit 1024\n",
+							subqueue, ident, i.Name, i.Name, planlist[sub.Plan].Downspeed, planlist[sub.Plan].Downspeed, planlist[sub.Plan].Downspeed*2, 3000)
+
+						//subqueue = fmt.Sprintf("%squeue %s%stest parent %s bandwidth %dM min 5M max %dM qlimit 1024\n", subqueue, ident, i.Name, i.Name, planlist[sub.Plan].SpeedTestDown, planlist[sub.Plan].SpeedTestDown)
+
+						//subpass = fmt.Sprintf("%spass in quick on $%s inet proto { tcp, udp } from %s to any port { 5060, 8080 } %s set queue (%s%stest, %slow) set prio 7 tag \"%stest\"\n",
+						//subpass, i.Name, sub.FramedIp, gateway, ident, i.Name, i.Name, ident)
+
+						subpass = fmt.Sprintf("%spass in quick on $%s from %s %s set queue (%s%s, %slow) %s label \"%s\" tag \"%s\"\n",
+							subpass, i.Name, sub.FramedIp, gateway, ident, i.Name, i.Name, priority, sub.FramedIp, ident)
 					}
 				}
 			}
 		}
+	}
+	fwrules := ""
+	for _, rule := range newpfcfg.Rules {
+		subqueue = subqueue + rule.QRule
+		fwrules = fwrules + rule.OutRule
+		fwrules = fwrules + rule.Rule
 	}
 	var wifilist string
 	var subslist string
@@ -332,6 +414,7 @@ block in quick from <martians>
 	for _, sub := range newpfcfg.Subs {
 		if sub.Status == "active" {
 			wifilist = fmt.Sprintf("%s%s\n", wifilist, sub.FramedIp)
+			plans[sub.Plan] = fmt.Sprintf("%s%s\n", plans[sub.Plan], sub.FramedIp)
 		} else {
 			subslist = fmt.Sprintf("%s%s\n", subslist, sub.FramedIp)
 		}
@@ -342,19 +425,33 @@ block in quick from <martians>
 		log.Println(err)
 		return err
 	}
+	for k, v := range plans {
+		os.Rename(rundir+c.WifiIpList+k, rundir+c.WifiIpList+k+".old")
+		err = os.WriteFile(rundir+c.WifiIpList+k, []byte(v), 0600)
+		if err != nil {
+			log.Println(err)
+			return err
+		}
+	}
 	os.Rename(rundir+c.SubsIpList, rundir+c.SubsIpList+".old")
 	err = os.WriteFile(rundir+c.SubsIpList, []byte(subslist), 0600)
 	if err != nil {
 		log.Println(err)
 		return err
 	}
-	configstring := macros + tables + queues + subqueue + matches + defaultblock + defaultqrules + passrules + subpass + lbrules
-	err = os.WriteFile(rundir+"pf.conf", []byte(configstring), 0600)
+	configstring := macros + plantables + tables + queues + planqueue + subqueue + matches + defaultblock + defaultqrules + passrules + strules + fwrules + subpass + lbrules
+	err = os.WriteFile("/tmp/pf.conf", []byte(configstring), 0600)
 	if err != nil {
 		log.Println(err)
 		return err
 	}
-	err = newpfcfg.DhcpCreate(rundir)
+	err = os.WriteFile("/etc/npppd/npppd-users", []byte(pppcreds), 0600)
+	if err != nil {
+		log.Println(err)
+		return err
+	}
+
+	err = ConfigCreate(c, rundir)
 	if err != nil {
 		log.Println(err)
 		return err
@@ -362,19 +459,207 @@ block in quick from <martians>
 	return nil
 }
 
-func Init(config string) (*PfConfig, error) {
+// fetchConfText GETs a {"conf": "..."} response from urlbase (e.g. srvcman's
+// /api/v1/dhcpserver/conf or /api/v1/unbounddns/conf) and returns the conf
+// text. DhcpCreate/DnsCreate use this to pull config text rendered
+// server-side by srvcman, which owns the underlying DhcpServer/UnboundDns
+// records, rather than duplicating that rendering logic here.
+func fetchConfText(url string, token *string) (string, error) {
+	if token == nil {
+		return "", fmt.Errorf("fetchConfText: no API token available")
+	}
+	client := &http.Client{}
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", *token))
+	res, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer res.Body.Close()
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		return "", err
+	}
+	if res.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("fetchConfText: %s returned %d: %s", url, res.StatusCode, string(body))
+	}
+	var resp struct {
+		Conf string `json:"conf"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return "", err
+	}
+	return resp.Conf, nil
+}
+
+// DhcpCreate fetches the freshly rendered dhcpd.conf text from srvcman
+// (which owns the DhcpServer records) and stages it at rundir+"dhcpd.conf" -
+// the same path modules/changes' apply flow on srvcman then backs up/stages
+// into /etc/dhcpd.conf and restarts dhcpd from, via ordinary Arkcmd mv/rcctl
+// commands. srvcman no longer writes this file itself: since srvcman and
+// arkgated may run on separate hosts, a file srvcman wrote to its own disk
+// was never visible to arkgated's mv of that same path - fetching the
+// content here means the file being backed up/staged always exists on the
+// host doing the backing up.
+func DhcpCreate(rundir, urlbase string, token *string) error {
+	conf, err := fetchConfText(urlbase+"dhcpserver/conf", token)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile("/tmp/dhcpd.conf", []byte(conf), 0640)
+}
+
+// DnsCreate is DhcpCreate's unbound.conf equivalent, fetching from srvcman's
+// /unbounddns/conf and staging at rundir+"unbound.conf".
+func DnsCreate(rundir, urlbase string, token *string) error {
+	conf, err := fetchConfText(urlbase+"unbounddns/conf", token)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile("/tmp/unbound.conf", []byte(conf), 0640)
+}
+
+// npppdStagePath is where PppoeCreate leaves the rendered npppd.conf for
+// srvcman's apply flow to move into /etc/npppd. A var only so tests can point
+// it at a temp dir.
+var npppdStagePath = "/tmp/npppd.conf"
+
+// PppoeCreate is DhcpCreate's npppd.conf equivalent, fetching from srvcman's
+// /pppoe/conf and staging it at npppdStagePath.
+//
+// The module is mounted at /api/v1/pppoe - singular, like its registry key -
+// not /pppoes. This used to ask for pppoes/conf, which is a 404: no file was
+// ever staged, the install step that follows had nothing to move, and npppd
+// was restarted without a config and died, with the apply reporting success.
+func PppoeCreate(rundir, urlbase string, token *string) error {
+	// A file left from an earlier run must not survive a failed fetch: the
+	// install step moves whatever is at this path into /etc/npppd, so a stale
+	// one would be installed as if it were new.
+	if err := os.Remove(npppdStagePath); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	conf, err := fetchConfText(urlbase+"pppoe/conf", token)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(npppdStagePath, []byte(conf), 0640)
+}
+
+// SnmpCreate is DhcpCreate's snmpd.conf equivalent, fetching from
+// srvcman's /snmpserver/conf. The file carries SNMPv3 auth/enc keys, so it
+// is written 0600 rather than 0640 - snmpd runs as root and reads it
+// before dropping privileges, and nothing else needs to see it.
+func SnmpCreate(rundir, urlbase string, token *string) error {
+	conf, err := fetchConfText(urlbase+"snmpserver/conf", token)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile("/tmp/snmpd.conf", []byte(conf), 0600)
+}
+
+// promoteIfDifferent replaces dst with src's content, but only if they
+// differ (or dst doesn't exist yet) - reports whether it did anything. dst
+// is backed up to a timestamped copy first. src not existing is not an
+// error (e.g. no default gateway configured for this router yet); it just
+// means there's nothing to promote.
+func promoteIfDifferent(src, dst string) (bool, error) {
+	newdata, err := os.ReadFile(src)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	if olddata, err := os.ReadFile(dst); err == nil {
+		if bytes.Equal(olddata, newdata) {
+			return false, nil
+		}
+		if err := os.Rename(dst, fmt.Sprintf("%s.%d", dst, time.Now().Unix())); err != nil {
+			log.Println("promoteIfDifferent: backup of", dst, "failed:", err)
+		}
+	}
+	if err := os.WriteFile(dst, newdata, 0640); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// ApplyIfaces regenerates every configured interface's hostname.<if> file
+// (plus mygate/resolv.conf for the default interface) from live Pfconfig
+// data, then promotes each into /etc and restarts networking for it - but
+// only for files whose freshly rendered content actually differs from
+// what's currently installed, so pinging one gateway's config doesn't
+// disrupt an unrelated interface's active connections with an unneeded
+// netstart. This replaces srvcman's former approach of writing hostname.<if>
+// files to its own /tmp and asking arkgated to mv them: that broke once
+// srvcman and arkgated could run on separate hosts, since the file srvcman
+// wrote was never visible on arkgated's filesystem. Now arkgated both
+// generates and applies these files itself.
+func ApplyIfaces(router, rundir, urlbase string, token *string) ([]string, error) {
+	c, err := GetSubs(urlbase+"pfconfig/query/"+router, token)
+	if err != nil {
+		return nil, err
+	}
+	if err := ConfigCreate(c, "/tmp/"); err != nil {
+		return nil, err
+	}
+	var applied []string
+	applyDevice := func(device string) error {
+		changed, err := promoteIfDifferent("/tmp/hostname."+device, "/etc/hostname."+device)
+		if err != nil || !changed {
+			return err
+		}
+		if out, err := exec.Command("sh", "/etc/netstart", device).CombinedOutput(); err != nil {
+			log.Println(string(out))
+			return fmt.Errorf("netstart %s: %w", device, err)
+		}
+		applied = append(applied, device)
+		return nil
+	}
+	for _, d := range c.Ifaces {
+		if err := applyDevice(d.Device); err != nil {
+			return applied, err
+		}
+	}
+	// ConfigCreate writes a hostname.<if> for every pflow device too (the
+	// flowsrc/flowdst/pflowproto triple), so they need the same promote +
+	// netstart. Without this a pflow edit renders its config into rundir
+	// and stops there: generated, never installed, never brought up.
+	for _, p := range c.Pflows {
+		if err := applyDevice(p.Device); err != nil {
+			return applied, err
+		}
+	}
+	gwChanged, err := promoteIfDifferent("/tmp/mygate", "/etc/mygate")
+	if err != nil {
+		return applied, err
+	}
+	if gwChanged {
+		if out, err := exec.Command("sh", "/etc/netstart").CombinedOutput(); err != nil {
+			log.Println(string(out))
+			return applied, fmt.Errorf("netstart: %w", err)
+		}
+		applied = append(applied, "mygate")
+	}
+	return applied, nil
+}
+
+func Init(config string) (*pfconfigmodel.Pfconfig, error) {
 	jsoncmdFile, err := os.Open(config)
 	if err != nil {
 		log.Println("Error during json open file: ", err)
 		return nil, err
 	}
 	defer jsoncmdFile.Close()
-	byteValue, err := ioutil.ReadAll(jsoncmdFile)
+	byteValue, err := io.ReadAll(jsoncmdFile)
 	if err != nil {
 		log.Println("Error during reading json content: ", err)
 		return nil, err
 	}
-	var cfg PfConfig
+	var cfg pfconfigmodel.Pfconfig
 	err = json.Unmarshal(byteValue, &cfg)
 	if err != nil {
 		log.Println("Error during unmarshal: ", err)

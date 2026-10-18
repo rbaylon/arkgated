@@ -4,11 +4,15 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"net/http"
+	"os"
+	"time"
 
-	pfconfig "github.com/rbaylon/arkgated/config/pf"
+	"github.com/golang-jwt/jwt/v5"
+	Arkcommand "github.com/rbaylon/arkgated/arkcommand"
+	pfconfigmodel "github.com/rbaylon/srvcman/modules/pfconfig/model"
 )
 
 type Token struct {
@@ -16,11 +20,21 @@ type Token struct {
 	Jwt  string
 }
 
-func Enroll(urlbase string, token *string, pf *pfconfig.PfConfig) error {
+func Enroll(urlbase string, token *string, pf *pfconfigmodel.Pfconfig) error {
+	if pf == nil {
+		return fmt.Errorf("Enroll: no router config available")
+	}
+	if token == nil {
+		return fmt.Errorf("Enroll: no API token available")
+	}
 	create_url := urlbase + "pfconfig/create"
 	query_url := urlbase + "pfconfig/query/" + pf.Router
 	client := &http.Client{}
-	req, _ := http.NewRequest("GET", query_url, nil)
+	req, err := http.NewRequest("GET", query_url, nil)
+	if err != nil {
+		log.Println(err)
+		return err
+	}
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", *token))
 	res, err := client.Do(req)
 	if err != nil {
@@ -28,55 +42,100 @@ func Enroll(urlbase string, token *string, pf *pfconfig.PfConfig) error {
 		return err
 	}
 	if res.StatusCode != 200 {
+		_, _ = io.Copy(io.Discard, res.Body)
 		res.Body.Close()
 		cfg, _ := json.Marshal(pf)
 		log.Println("Enrolling...")
-		req, _ = http.NewRequest("POST", create_url, bytes.NewBuffer(cfg))
-		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", *token))
-		res, _ = client.Do(req)
-		defer res.Body.Close()
-		if res.StatusCode != 200 {
-			return fmt.Errorf("Failed to enroll router")
+		req, err := http.NewRequest("POST", create_url, bytes.NewBuffer(cfg))
+		if err != nil {
+			log.Println("Failed to POST router", err)
+			return err
 		}
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", *token))
+		res, err := client.Do(req)
+		if err != nil {
+			log.Println(err)
+			return err
+		}
+
+		if res.StatusCode != 200 {
+			b, err := io.ReadAll(res.Body)
+			if err != nil {
+				log.Println("Read body error", err)
+			}
+			log.Println(string(b))
+			res.Body.Close()
+			return fmt.Errorf("failed to enroll router: status %d", res.StatusCode)
+		}
+		_, _ = io.Copy(io.Discard, res.Body)
+		res.Body.Close()
 	}
+	_, _ = io.Copy(io.Discard, res.Body)
+	res.Body.Close()
 	log.Println("Enrolled")
 	return nil
 }
 
-func GetSubs(url string, token *string) (*pfconfig.PfConfig, error) {
-	client := &http.Client{}
-	req, _ := http.NewRequest("GET", url, nil)
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", *token))
-	res, err := client.Do(req)
-	if err != nil {
-		log.Println(err)
-		return nil, err
-	}
-	defer res.Body.Close()
-	responseData, ioerr := ioutil.ReadAll(res.Body)
-	if ioerr != nil {
-		return nil, ioerr
-	}
-	var cfg pfconfig.PfConfig
-	json.Unmarshal(responseData, &cfg)
-	return &cfg, nil
-}
-
 func GetToken(creds string, api_login_url string) (*string, error) {
 	client := &http.Client{}
-	req, _ := http.NewRequest("GET", api_login_url, nil)
-	req.Header.Set("Authorization", fmt.Sprintf("Basic %s", creds))
-	res, err := client.Do(req)
-	defer res.Body.Close()
+	req, err := http.NewRequest("GET", api_login_url, nil)
 	if err != nil {
 		return nil, err
 	}
-	responseData, ioerr := ioutil.ReadAll(res.Body)
+	req.Header.Set("Authorization", fmt.Sprintf("Basic %s", creds))
+	res, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+	responseData, ioerr := io.ReadAll(res.Body)
 	if ioerr != nil {
 		return nil, ioerr
 	}
-
+	if res.StatusCode != 200 {
+		return nil, fmt.Errorf("api login failed: status %d: %s", res.StatusCode, string(responseData))
+	}
 	var t Token
-	json.Unmarshal(responseData, &t)
+	if err := json.Unmarshal(responseData, &t); err != nil {
+		return nil, err
+	}
 	return &t.Jwt, nil
+}
+
+func ExecScripts(cmd *Arkcommand.Arkcmd, outfile string, wt time.Duration) {
+	for {
+		ret, out := cmd.RunWithOutput()
+		if ret == 0 {
+			err := os.WriteFile(outfile, out, 0644)
+			if err != nil {
+				log.Println(err)
+			}
+		}
+		time.Sleep(wt * time.Second)
+	}
+}
+
+func CheckExpirationWithoutVerify(tokenStr string) (bool, error) {
+	parser := jwt.NewParser()
+	var claims jwt.MapClaims
+
+	// Parse unverified explicitly skips signature validation
+	_, _, err := parser.ParseUnverified(tokenStr, &claims)
+	if err != nil {
+		return false, err
+	}
+
+	// Extract the standard 'exp' claim safely
+	exp, err := claims.GetExpirationTime()
+	if err != nil {
+		return false, fmt.Errorf("failed to get expiration: %w", err)
+	}
+
+	if exp == nil {
+		return false, fmt.Errorf("exp claim is missing from token")
+	}
+
+	// Compare token expiration timestamp with current system time
+	isExpired := exp.Before(time.Now())
+	return isExpired, nil
 }

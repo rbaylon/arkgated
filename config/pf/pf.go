@@ -9,7 +9,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -598,6 +597,9 @@ func promoteIfDifferent(src, dst string) (bool, error) {
 // srvcman and arkgated could run on separate hosts, since the file srvcman
 // wrote was never visible on arkgated's filesystem. Now arkgated both
 // generates and applies these files itself.
+//
+// Every netstart is followed by RestoreRoutes: the static routes and the gateway
+// monitors' host routes live only in the kernel table, which netstart can flush.
 func ApplyIfaces(router, rundir, urlbase string, token *string) ([]string, error) {
 	c, err := GetSubs(urlbase+"pfconfig/query/"+router, token)
 	if err != nil {
@@ -612,8 +614,7 @@ func ApplyIfaces(router, rundir, urlbase string, token *string) ([]string, error
 		if err != nil || !changed {
 			return err
 		}
-		if out, err := exec.Command("sh", "/etc/netstart", device).CombinedOutput(); err != nil {
-			log.Println(string(out))
+		if err := netstart(device, urlbase, token); err != nil {
 			return fmt.Errorf("netstart %s: %w", device, err)
 		}
 		applied = append(applied, device)
@@ -638,8 +639,7 @@ func ApplyIfaces(router, rundir, urlbase string, token *string) ([]string, error
 		return applied, err
 	}
 	if gwChanged {
-		if out, err := exec.Command("sh", "/etc/netstart").CombinedOutput(); err != nil {
-			log.Println(string(out))
+		if err := netstart("", urlbase, token); err != nil {
 			return applied, fmt.Errorf("netstart: %w", err)
 		}
 		applied = append(applied, "mygate")

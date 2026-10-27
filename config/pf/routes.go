@@ -1,6 +1,7 @@
 package pfconfig
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -115,11 +116,20 @@ func install(s routeSpec) error {
 // is logged and does not stop the others. urlbase is srvcman's API base
 // ("http://host:port/api/v1/").
 func RestoreRoutes(urlbase string, token *string) (installed, failed int) {
+	installed, failed, _ = restore(urlbase, token)
+	return installed, failed
+}
+
+// restore is RestoreRoutes, and also reports whether both lists could be read
+// (false when srvcman could not be reached, so nothing is known yet).
+func restore(urlbase string, token *string) (installed, failed int, listed bool) {
+	listed = true
 	var specs []routeSpec
 	var statics []staticRouteRec
 	if err := fetchList(urlbase+"staticroutes", token, &statics); err != nil {
 		log.Println("routes: could not read the static routes:", err)
 		failed++
+		listed = false
 	}
 	for _, r := range statics {
 		if r.Destination == "" || r.Gateway == "" {
@@ -137,6 +147,7 @@ func RestoreRoutes(urlbase string, token *string) (installed, failed int) {
 	if err := fetchList(urlbase+"gatewaymonitor", token, &monitors); err != nil {
 		log.Println("routes: could not read the gateway monitors:", err)
 		failed++
+		listed = false
 	}
 	for _, g := range monitors {
 		if g.MonitorIp == "" || g.Ip == "" {
@@ -158,7 +169,39 @@ func RestoreRoutes(urlbase string, token *string) (installed, failed int) {
 		}
 		installed++
 	}
-	return installed, failed
+	return installed, failed, listed
+}
+
+// retryEvery and giveUpAfter pace RestoreRoutesWhenReady; tests shorten them.
+var (
+	retryEvery  = 5 * time.Second
+	giveUpAfter = 5 * time.Minute
+)
+
+// RestoreRoutesWhenReady installs the managed routes again after a boot or an
+// arkgated restart. The kernel keeps none of them across a reboot, and arkgated
+// starts alongside srvcman, so the lists are retried until srvcman answers (or
+// giveUpAfter has passed). token returns the current API token, nil until the
+// first login has worked.
+func RestoreRoutesWhenReady(ctx context.Context, urlbase string, token func() *string) {
+	deadline := time.Now().Add(giveUpAfter)
+	for {
+		if t := token(); t != nil {
+			if installed, failed, listed := restore(urlbase, t); listed {
+				log.Printf("routes: restored %d at start (%d failed)", installed, failed)
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			log.Println("routes: gave up restoring routes at start; srvcman did not answer")
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(retryEvery):
+		}
+	}
 }
 
 // netstart runs /etc/netstart (for one device, or for everything when device is

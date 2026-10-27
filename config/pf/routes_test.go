@@ -1,10 +1,12 @@
 package pfconfig
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 // harness replaces the three outside calls: the API lists, route(8) and sh.
@@ -172,5 +174,55 @@ func TestAFailedNetstartIsAnErrorAndRestoresNothing(t *testing.T) {
 	}
 	if len(h.calls) != 1 {
 		t.Errorf("routes were touched after a failed netstart: %v", h.calls)
+	}
+}
+
+func TestRoutesAreRestoredAtStartOnceSrvcmanAnswers(t *testing.T) {
+	h := newHarness(t)
+	h.statics = []staticRouteRec{{Name: "r", Type: "net", Destination: "10.20.0.0/16", Gateway: "192.168.1.254"}}
+	h.monitors = []gatewayMonitorRec{{Name: "m", Ip: "192.168.208.2", MonitorIp: "1.1.1.1"}}
+	h.failList["staticroutes"] = true // srvcman is still starting
+	defer h.install()()
+	oldRetry := retryEvery
+	retryEvery = time.Millisecond
+	defer func() { retryEvery = oldRetry }()
+	tries := 0
+	token := func() *string {
+		tries++
+		if tries == 3 {
+			h.failList["staticroutes"] = false // it is up now
+		}
+		if tries == 1 {
+			return nil // not logged in yet
+		}
+		return &tok
+	}
+	RestoreRoutesWhenReady(context.Background(), "http://x/", token)
+	// The monitor route may be installed on the early, partial attempt as well
+	// (a repeat is harmless); the static route needs the list, so exactly once.
+	var statics, monitors int
+	for _, c := range h.calls {
+		switch {
+		case strings.HasPrefix(c, "route -q add -net 10.20.0.0/16"):
+			statics++
+		case strings.HasPrefix(c, "route -q add -host 1.1.1.1"):
+			monitors++
+		}
+	}
+	if statics != 1 || monitors < 1 {
+		t.Fatalf("static installed %d times, monitor %d times, calls = %v", statics, monitors, h.calls)
+	}
+}
+
+func TestStartRestoreGivesUpWhenSrvcmanNeverAnswers(t *testing.T) {
+	h := newHarness(t)
+	h.failList["staticroutes"] = true
+	defer h.install()()
+	oldRetry, oldGive := retryEvery, giveUpAfter
+	retryEvery, giveUpAfter = time.Millisecond, 20*time.Millisecond
+	defer func() { retryEvery, giveUpAfter = oldRetry, oldGive }()
+	RestoreRoutesWhenReady(context.Background(), "http://x/", func() *string { return &tok })
+	if len(h.calls) != 0 {
+		t.Errorf("routes touched without a list: %v", h.calls)
 	}
 }

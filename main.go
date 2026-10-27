@@ -308,6 +308,9 @@ func run(c *config, out io.Writer, sockets []net.Listener, ctx context.Context) 
 	job := make(chan joborder, 10)
 	go worker(job, ctx)
 	go refreshTokenLoop(c, ctx)
+	// Static routes and gateway-monitor routes only live in the kernel table, so
+	// they are gone after a reboot; put them back once srvcman answers.
+	go pfconfig.RestoreRoutesWhenReady(ctx, c.srvcurl, func() *string { return apitoken })
 
 	// handleConn is shared by every listener's accept loop below - a
 	// command means the same thing regardless of whether it arrived over
